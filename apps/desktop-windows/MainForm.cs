@@ -29,6 +29,10 @@ public sealed class MainForm : Form
     private const int HtBottom = 15;
     private const int HtBottomLeft = 16;
     private const int HtBottomRight = 17;
+    private const int WmNcHitTest = 0x0084;
+    private const int WmNcLButtonDown = 0x00A1;
+    private const int WmSysCommand = 0x0112;
+    private const int ScMove = 0xF010;
     private WebView2? _browser;
     private ServiceProvider? _services;
     private DeviceRegistry? _devices;
@@ -90,19 +94,16 @@ public sealed class MainForm : Form
 
     protected override void WndProc(ref Message m)
     {
-        const int wmNcHitTest = 0x0084;
-        if (m.Msg == wmNcHitTest)
+        if (m.Msg == WmNcHitTest)
         {
-            base.WndProc(ref m);
-            if ((int)m.Result == HtClient)
+            var screenPoint = new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
+            var point = PointToClient(screenPoint);
+            var hitTest = HitTestResizeBorder(point);
+            if (hitTest != HtClient)
             {
-                var screenPoint = new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
-                var point = PointToClient(screenPoint);
-                m.Result = HitTestResizeBorder(point);
+                m.Result = hitTest;
                 return;
             }
-
-            return;
         }
 
         base.WndProc(ref m);
@@ -157,8 +158,6 @@ public sealed class MainForm : Form
 
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(nint hObject);
-
-    private const int WmNcLButtonDown = 0x00A1;
 
     private async Task InitializeServicesAsync()
     {
@@ -487,7 +486,7 @@ public sealed class MainForm : Form
         }
 
         ReleaseCapture();
-        SendMessage(Handle, WmNcLButtonDown, HtCaption, 0);
+        SendMessage(Handle, WmSysCommand, ScMove | HtCaption, 0);
     }
 
     private void RemoveLoadingSurface()
@@ -519,6 +518,9 @@ public sealed class MainForm : Form
             {
                 var cornerPreference = DwmWindowCornerPreferenceRound;
                 _ = DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref cornerPreference, sizeof(int));
+
+                var backdropType = DwmSystemBackdropAcrylic;
+                _ = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType, ref backdropType, sizeof(int));
             }
         }
         catch
@@ -531,7 +533,9 @@ public sealed class MainForm : Form
 
     private const int DwmwaUseImmersiveDarkMode = 20;
     private const int DwmwaWindowCornerPreference = 33;
+    private const int DwmwaSystemBackdropType = 38;
     private const int DwmWindowCornerPreferenceRound = 2;
+    private const int DwmSystemBackdropAcrylic = 3;
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
