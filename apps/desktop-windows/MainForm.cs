@@ -172,6 +172,7 @@ public sealed class MainForm : Form
         collection.AddSingleton<PermissionService>();
         collection.AddSingleton<StructuredLogStore>();
         collection.AddSingleton<PairingService>();
+        collection.AddSingleton<QuicGatewayService>();
         collection.AddSingleton<OneDeskDataPaths>();
         collection.AddSingleton<JsonFileStore>();
         collection.AddSingleton<OneDeskRepository>();

@@ -11,6 +11,7 @@ public sealed class JsApiRouter
     private readonly CapabilityDirectoryService _capabilities;
     private readonly PluginHostService _plugins;
     private readonly OneDeskDataPaths _paths;
+    private readonly QuicGatewayService _gateway;
 
     public JsApiRouter(
         DeviceRegistry devices,
@@ -18,7 +19,8 @@ public sealed class JsApiRouter
         StructuredLogStore logs,
         CapabilityDirectoryService capabilities,
         PluginHostService plugins,
-        OneDeskDataPaths paths)
+        OneDeskDataPaths paths,
+        QuicGatewayService gateway)
     {
         _devices = devices;
         _permissions = permissions;
@@ -26,6 +28,7 @@ public sealed class JsApiRouter
         _capabilities = capabilities;
         _plugins = plugins;
         _paths = paths;
+        _gateway = gateway;
     }
 
     public Task<JsApiResult> RouteAsync(JsApiRequest request, CancellationToken cancellationToken = default)
@@ -62,7 +65,7 @@ public sealed class JsApiRouter
             ["targetDeviceId"] = request.TargetDeviceId
         });
 
-        return Task.FromResult(JsApiResult.Error("TargetOffline", "Remote forwarding transport is not connected yet."));
+        return _gateway.ForwardJsApiAsync(request, cancellationToken);
     }
 
     private async Task<JsApiResult> ExecuteLocalAsync(JsApiRequest request, CancellationToken cancellationToken)

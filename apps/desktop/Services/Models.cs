@@ -72,4 +72,21 @@ public sealed record PluginManifest(
     string Name,
     string Version,
     bool Persistent,
-    IReadOnlyList<PermissionDeclaration> Permissions);
+    IReadOnlyList<PermissionDeclaration> Permissions,
+    PluginFrontendDefinition? Frontend = null,
+    PluginBackendDefinition? Backend = null,
+    IReadOnlyDictionary<string, object?>? SettingsSchema = null,
+    bool SelfContained = true);
+
+public sealed record PluginFrontendDefinition(string Entry);
+
+public sealed record PluginBackendDefinition(
+    string Protocol,
+    bool Persistent,
+    IReadOnlyList<PluginPlatformArtifact> Artifacts);
+
+public sealed record PluginPlatformArtifact(
+    string Platform,
+    string Architecture,
+    string Path,
+    IReadOnlyList<string> Command);

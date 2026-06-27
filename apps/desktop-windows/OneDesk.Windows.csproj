@@ -27,6 +27,7 @@
     <Compile Include="..\desktop\Services\PairingService.cs" Link="Services\PairingService.cs" />
     <Compile Include="..\desktop\Services\PermissionService.cs" Link="Services\PermissionService.cs" />
     <Compile Include="..\desktop\Services\PluginHostService.cs" Link="Services\PluginHostService.cs" />
+    <Compile Include="..\desktop\Services\QuicGatewayService.cs" Link="Services\QuicGatewayService.cs" />
     <Compile Include="..\desktop\Services\SchemePackageService.cs" Link="Services\SchemePackageService.cs" />
     <Compile Include="..\desktop\Services\StructuredLogStore.cs" Link="Services\StructuredLogStore.cs" />
     <Compile Include="..\desktop\Services\WorkspaceBootstrapper.cs" Link="Services\WorkspaceBootstrapper.cs" />

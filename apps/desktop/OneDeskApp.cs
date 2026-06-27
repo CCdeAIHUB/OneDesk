@@ -24,6 +24,7 @@ public sealed partial class OneDeskApp : Application
         collection.AddSingleton<PermissionService>();
         collection.AddSingleton<StructuredLogStore>();
         collection.AddSingleton<PairingService>();
+        collection.AddSingleton<QuicGatewayService>();
         collection.AddSingleton<SchemePackageService>();
         collection.AddSingleton<PluginHostService>();
         collection.AddSingleton<JsApiRouter>();

@@ -67,11 +67,21 @@ export type ComponentManifest = z.infer<typeof componentManifestSchema>;
 
 export const jsApiErrorCodeSchema = z.enum([
   "CapabilityNotSupported",
+  "CapabilityNotFound",
+  "CapabilityPlatformHandlerMissing",
+  "CapabilityRequiresUserPath",
   "PermissionDenied",
   "TargetOffline",
   "TargetNotFound",
+  "GatewayOffline",
+  "TransportNotAttached",
+  "InvalidPath",
   "InvalidRequest",
+  "InvalidPayload",
   "ExecutionFailed",
+  "PluginNotInstalled",
+  "PluginBackendMissing",
+  "PluginNoResponse",
 ]);
 
 export type JsApiErrorCode = z.infer<typeof jsApiErrorCodeSchema>;
