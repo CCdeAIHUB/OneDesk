@@ -65,6 +65,26 @@ This file records confirmed project decisions and constraints. Keep it updated w
   - This capability must be verified carefully across desktop platforms because platform support may differ.
 - Desktop frontend and mobile frontend are separate Vue 3 projects because the desktop side is a designer/configuration/control app while the mobile side is a control surface display.
 
+## UI Design System
+
+- UI is generated/designed by Codex unless the user gives more specific direction.
+- Vue 3 frontends must use Tailwind CSS v4.
+- Icons should primarily use Yesicon's Solar icon set.
+- If Solar does not contain a required icon, another Yesicon icon set may be used.
+- All icons must come from Yesicon icon sets.
+- Theme color: Tailwind CSS `sky-500`.
+- UI must support light mode and dark mode.
+- Main window background should have partial transparency and a frosted-glass feel.
+- Content surfaces such as navigation bars and cards should not be transparent.
+- UI style should lean toward consumer-product appeal and product polish, not conservative B2B enterprise styling.
+- Chromium-rendered areas must be fully drawn with Vue 3 UI.
+- Do not expose built-in browser/Chromium UI surfaces to users.
+- For operations such as export/download, OneDesk must draw its own dialogs, progress UI, and status feedback instead of using Chromium's default download UI.
+- OneDesk requires two notification types:
+  - In-app notifications/toasts for internal operation feedback such as save, import, export, and delete.
+  - Native system notifications for major events such as device disconnection.
+- Async operations such as large file import/export must show loading states or progress bars as appropriate.
+
 ## Mobile Architecture
 
 - Mobile shell uses each target platform's native language.
