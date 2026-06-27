@@ -1,4 +1,4 @@
-using System.Drawing;
+﻿using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -727,7 +727,7 @@ public sealed class MainForm : Form
 
     private static BridgeResponse ShellNotReady(BridgeMessage message)
     {
-        return new BridgeResponse(message.RequestId, false, null, "ShellNotReady", "OneDesk 壳子服务尚未初始化完成");
+        return new BridgeResponse(message.RequestId, false, null, "ShellNotReady", "OneDesk 桥接服务尚未初始化完成");
     }
 
     private static BridgeResponse InvalidPayload(BridgeMessage message)
@@ -802,7 +802,7 @@ public sealed class MainForm : Form
         targetDeviceId,
         capability,
         payload: payloadJson ? JSON.parse(payloadJson) : null,
-        source: { kind: 'system' }
+        source: { kind: 'frontend' }
       });
     },
     listWorkspace() {
@@ -826,9 +826,27 @@ public sealed class MainForm : Form
   };
 
   window.fetch = () => Promise.reject(new Error('OneDesk blocks direct frontend networking'));
+  window.XMLHttpRequest = function () {
+    throw new Error('OneDesk blocks direct frontend networking');
+  };
   window.WebSocket = function () {
     throw new Error('OneDesk blocks direct frontend networking');
   };
+  window.EventSource = function () {
+    throw new Error('OneDesk blocks direct frontend networking');
+  };
+  navigator.sendBeacon = () => {
+    throw new Error('OneDesk blocks direct frontend networking');
+  };
+  document.addEventListener('click', event => {
+    const anchor = event.target?.closest?.('a[href]');
+    if (!anchor) return;
+    const href = anchor.getAttribute('href') || '';
+    if (/^(https?:|wss?:)/i.test(href)) {
+      event.preventDefault();
+      throw new Error('OneDesk blocks direct frontend navigation');
+    }
+  }, true);
 })();
 """;
 

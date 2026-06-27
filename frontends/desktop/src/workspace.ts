@@ -110,6 +110,17 @@ function applyPreviewData(): void {
       requestedPermissions: [{ category: "plugin", capability: "plugin.invoke", highRisk: false, description: "调用桌面端插件方法" }],
       pluginDependencies: [{ id: "cc.onedesk.example.obs", version: "1.0.0", kind: "plugin" }],
     },
+    {
+      id: "component-volume-strip",
+      name: "音量推子",
+      version: "1.0.0",
+      editMode: "code",
+      entryFile: "src/VolumeStrip.vue",
+      visualConfigFile: null,
+      actionIds: [],
+      requestedPermissions: [{ category: "input", capability: "input.keyboardMouseSimulation", highRisk: true, description: "模拟键盘快捷键调整音量" }],
+      pluginDependencies: [],
+    },
   ];
   workspace.actions = [
     {

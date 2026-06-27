@@ -10,6 +10,8 @@ namespace OneDesk.Desktop.Services;
 public sealed class SchemePackageService
 {
     private readonly OneDeskDataPaths _paths;
+    private const int MaxPackageEntries = 4096;
+    private const long MaxPackageUncompressedBytes = 512L * 1024 * 1024;
 
     public SchemePackageService(OneDeskDataPaths paths)
     {
@@ -82,7 +84,7 @@ public sealed class SchemePackageService
     private void ImportPackage(string packagePath, string destinationDirectory, string requiredManifest)
     {
         var temp = $"{destinationDirectory}.tmp-{Guid.NewGuid():N}";
-        ZipFile.ExtractToDirectory(packagePath, temp);
+        SafeExtractPackage(packagePath, temp);
         EnsureManifest(temp, requiredManifest);
 
         if (Directory.Exists(destinationDirectory))
@@ -91,6 +93,42 @@ public sealed class SchemePackageService
         }
 
         Directory.Move(temp, destinationDirectory);
+    }
+
+    private static void SafeExtractPackage(string packagePath, string destinationDirectory)
+    {
+        Directory.CreateDirectory(destinationDirectory);
+        using var archive = ZipFile.OpenRead(packagePath);
+        if (archive.Entries.Count > MaxPackageEntries)
+        {
+            throw new InvalidDataException("Package contains too many files.");
+        }
+
+        var totalSize = archive.Entries.Sum(entry => entry.Length);
+        if (totalSize > MaxPackageUncompressedBytes)
+        {
+            throw new InvalidDataException("Package is too large after extraction.");
+        }
+
+        var destinationRoot = Path.GetFullPath(destinationDirectory);
+        foreach (var entry in archive.Entries)
+        {
+            var targetPath = Path.GetFullPath(Path.Combine(destinationRoot, entry.FullName));
+            if (!targetPath.StartsWith(destinationRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(targetPath, destinationRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("Package contains a path outside the extraction directory.");
+            }
+
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                Directory.CreateDirectory(targetPath);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? destinationRoot);
+            entry.ExtractToFile(targetPath, overwrite: true);
+        }
     }
 
     private static void EnsureManifest(string directory, string manifestName)

@@ -18,7 +18,6 @@ declare global {
     OneDeskNative?: {
       callJsApi?: (targetDeviceId: string, capability: string, payloadJson: string) => string | Promise<string>;
       getDeviceId?: () => string | Promise<string>;
-      listWorkspace?: () => string | Promise<string>;
       minimizeWindow?: () => string | Promise<string>;
       maximizeWindow?: () => string | Promise<string>;
       startWindowDrag?: () => string | Promise<string>;
