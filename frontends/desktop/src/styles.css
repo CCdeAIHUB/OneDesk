@@ -102,7 +102,7 @@ header p {
 
 .field {
   border-radius: 12px;
-  background: rgb(255 255 255 / 0.8);
+  background: rgb(255 255 255);
   padding: 8px 10px;
   color: rgb(15 23 42);
   outline: none;

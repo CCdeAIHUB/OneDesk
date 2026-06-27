@@ -15,6 +15,7 @@ namespace OneDesk.Windows;
 public sealed class MainForm : Form
 {
     private static readonly Size InitialWindowSize = new(1200, 780);
+    private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
     private const int ResizeGripSize = 8;
     private const int CornerRadius = 22;
     private const uint SwpNoZOrder = 0x0004;
@@ -44,7 +45,8 @@ public sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Size = InitialWindowSize;
         MinimumSize = new Size(1120, 720);
-        BackColor = Color.FromArgb(248, 252, 255);
+        BackColor = TransparentShellColor;
+        TransparencyKey = TransparentShellColor;
         FormBorderStyle = FormBorderStyle.None;
         DoubleBuffered = true;
 
@@ -527,12 +529,11 @@ public sealed class MainForm : Form
     {
         var theme = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : "light";
         var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
-        var color = dark ? Color.Black : Color.FromArgb(248, 252, 255);
-        Opacity = 0.96d;
-        BackColor = color;
+        Opacity = 1d;
+        BackColor = TransparentShellColor;
         foreach (var handle in _resizeHandles)
         {
-            handle.BackColor = color;
+            handle.BackColor = TransparentShellColor;
         }
 
         ApplyDwmTheme(dark);

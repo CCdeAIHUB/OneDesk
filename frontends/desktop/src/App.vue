@@ -187,7 +187,7 @@ function startExport() {
               <button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white">新建组件</button>
             </div>
             <div class="grid grid-cols-2 gap-3">
-              <button v-for="item in components" :key="item.name" class="rounded-[20px] bg-white/72 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900/70" @click="componentRoute = 'editor'">
+              <button v-for="item in components" :key="item.name" class="rounded-[20px] bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900" @click="componentRoute = 'editor'">
                 <div class="flex items-center justify-between">
                   <span class="text-[14px] font-semibold">{{ item.name }}</span>
                   <span class="text-[11px]" :class="item.status === '缺少插件' ? 'text-rose-500' : item.status === '待确认' ? 'text-amber-500' : 'text-green-600'">{{ item.status }}</span>
@@ -226,7 +226,7 @@ function startExport() {
 
             <section class="soft-card min-w-0 p-4">
               <div class="mb-4 flex items-center justify-between">
-                <div class="flex rounded-full bg-white/72 p-1 text-[12px] shadow-sm dark:bg-slate-900">
+                <div class="flex rounded-full bg-white p-1 text-[12px] shadow-sm dark:bg-slate-900">
                   <button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'visual' ? 'bg-sky-500 text-white' : ''" @click="componentEditorMode = 'visual'">可视化</button>
                   <button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'code' ? 'bg-sky-500 text-white' : ''" @click="showCodeSwitchDialog = true">代码</button>
                 </div>
@@ -234,7 +234,7 @@ function startExport() {
               </div>
 
               <div v-if="componentEditorMode === 'visual'" class="grid gap-3">
-                <div class="rounded-[18px] bg-white/72 p-4 shadow-sm dark:bg-slate-900/70">
+                <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900">
                   <h3 class="text-[13px] font-semibold">样式配置</h3>
                   <div class="mt-3 grid grid-cols-4 gap-2 text-[12px]">
                     <select class="field"><option>渐变背景</option><option>纯色背景</option><option>图片背景</option><option>视频背景</option></select>
@@ -248,7 +248,7 @@ function startExport() {
                   </div>
                 </div>
 
-                <div class="rounded-[18px] bg-white/72 p-4 shadow-sm dark:bg-slate-900/70">
+                <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900">
                   <div class="mb-3 flex items-center justify-between"><h3 class="text-[13px] font-semibold">动作配置</h3><button class="text-[12px] text-sky-600">添加动作</button></div>
                   <div class="grid gap-2 text-[12px]">
                     <div class="grid grid-cols-[120px_1fr_80px] rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><span>三指上滑</span><span>调用 OBS Control / 切换场景</span><span class="text-right text-green-600">已授权</span></div>
@@ -279,7 +279,7 @@ const title = '启动场景'
           <section v-else-if="activeView === 'page' && pageRoute === 'manager'" class="soft-card h-full p-5">
             <div class="mb-5 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">页面管理</h2><p class="mt-1 text-[12px] text-slate-500">页面包含格子矩阵和组件绑定，选择页面后进入编辑页面</p></div><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white">新建页面</button></div>
             <div class="grid grid-cols-4 gap-3">
-              <button v-for="page in pages" :key="page.name" class="rounded-[20px] bg-white/72 p-4 text-left shadow-sm dark:bg-slate-900/70" @click="pageRoute = 'editor'">
+              <button v-for="page in pages" :key="page.name" class="rounded-[20px] bg-white p-4 text-left shadow-sm dark:bg-slate-900" @click="pageRoute = 'editor'">
                 <Icon icon="solar:smartphone-bold-duotone" class="size-8 text-sky-500" /><p class="mt-3 text-[14px] font-semibold">{{ page.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ page.grid }} · {{ page.components }} 组件 · {{ page.background }}</p>
               </button>
             </div>
@@ -288,15 +288,15 @@ const title = '启动场景'
           <section v-else-if="activeView === 'page'" class="soft-card h-full p-5">
             <button class="mb-4 flex items-center gap-2 text-[12px] text-sky-600" @click="pageRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回页面管理</button>
             <div class="grid h-[calc(100%-32px)] grid-cols-[260px_1fr] gap-5">
-              <aside class="rounded-[18px] bg-white/72 p-4 shadow-sm dark:bg-slate-900/70">
+              <aside class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900">
                 <h2 class="text-[16px] font-semibold">采集页面</h2>
                 <div class="mt-4 grid gap-2 text-[12px]">
                   <input class="field" value="4 行" /><input class="field" value="3 列" /><input class="field" value="格子间距 10" /><input class="field" value="页面边距 自动居中" /><select class="field"><option>渐变背景</option><option>图片背景</option><option>视频背景</option></select>
                 </div>
               </aside>
-              <div class="grid place-items-center rounded-[22px] bg-white/72 p-6 shadow-sm dark:bg-slate-900/70">
+              <div class="grid place-items-center rounded-[22px] bg-white p-6 shadow-sm dark:bg-slate-900">
                 <div class="grid aspect-[4/3] w-full max-w-[520px] grid-cols-4 grid-rows-3 gap-2 overflow-hidden rounded-[20px] bg-slate-100 p-3 dark:bg-slate-800">
-                  <div v-for="index in 12" :key="index" class="rounded-xl border border-slate-200 bg-white/80 dark:border-slate-700 dark:bg-slate-900/80"></div>
+                  <div v-for="index in 12" :key="index" class="rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"></div>
                 </div>
               </div>
             </div>
@@ -305,7 +305,7 @@ const title = '启动场景'
           <section v-else-if="activeView === 'scheme' && schemeRoute === 'manager'" class="soft-card h-full p-5">
             <div class="mb-5 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">方案管理</h2><p class="mt-1 text-[12px] text-slate-500">方案是最终应用到移动端的唯一成品</p></div><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white">新建方案</button></div>
             <div class="grid grid-cols-3 gap-3">
-              <button v-for="scheme in schemes" :key="scheme.name" class="rounded-[20px] bg-white/72 p-4 text-left shadow-sm dark:bg-slate-900/70" @click="schemeRoute = 'editor'">
+              <button v-for="scheme in schemes" :key="scheme.name" class="rounded-[20px] bg-white p-4 text-left shadow-sm dark:bg-slate-900" @click="schemeRoute = 'editor'">
                 <p class="text-[14px] font-semibold">{{ scheme.name }}</p><p class="mt-2 text-[12px] text-slate-500">{{ scheme.pages }} 页面 · {{ scheme.devices }} 设备</p><p class="mt-3 text-[12px] text-sky-600">{{ scheme.status }}</p>
               </button>
             </div>
@@ -314,13 +314,13 @@ const title = '启动场景'
           <section v-else-if="activeView === 'scheme'" class="soft-card h-full p-5">
             <button class="mb-4 flex items-center gap-2 text-[12px] text-sky-600" @click="schemeRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回方案管理</button>
             <div class="grid h-[calc(100%-32px)] grid-cols-[230px_1fr] gap-5">
-              <aside class="rounded-[18px] bg-white/72 p-4 shadow-sm dark:bg-slate-900/70">
+              <aside class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900">
                 <h2 class="text-[16px] font-semibold">直播控制台</h2>
                 <div class="mt-4 grid gap-2 text-[12px]">
                   <button v-for="page in pages" :key="page.name" class="rounded-xl bg-slate-50 px-3 py-2 text-left dark:bg-slate-800">{{ page.name }}</button>
                 </div>
               </aside>
-              <div class="rounded-[22px] bg-white/72 p-5 shadow-sm dark:bg-slate-900/70">
+              <div class="rounded-[22px] bg-white p-5 shadow-sm dark:bg-slate-900">
                 <h3 class="text-[13px] font-semibold">页面流程</h3>
                 <div class="mt-5 grid grid-cols-4 gap-4">
                   <div v-for="page in pages" :key="page.name" class="rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700"><Icon icon="solar:smartphone-bold-duotone" class="mx-auto size-8 text-sky-500" /><p class="mt-2 text-[13px] font-semibold">{{ page.name }}</p></div>
@@ -335,7 +335,7 @@ const title = '启动场景'
           <section v-else class="soft-card h-full overflow-auto p-5">
             <div class="mb-4 flex items-center justify-between"><h2 class="text-[16px] font-semibold">{{ viewTitle }}</h2><button class="rounded-full bg-sky-500 px-3 py-1.5 text-[12px] font-medium text-white" @click="startExport">执行操作</button></div>
             <div class="grid gap-2">
-              <div v-for="item in activeView === 'permission' ? permissions : logs" :key="typeof item === 'string' ? item : item.id" class="rounded-2xl bg-white/72 px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900/70">
+              <div v-for="item in activeView === 'permission' ? permissions : logs" :key="typeof item === 'string' ? item : item.id" class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900">
                 <template v-if="typeof item === 'string'">{{ item }}</template>
                 <template v-else><div class="flex items-center justify-between"><div><p class="font-semibold">{{ item.label }}</p><p class="mt-1 text-[12px] text-slate-500">{{ item.category }} · {{ item.id }}</p></div><span :class="item.risk === '高危' ? 'text-rose-500' : 'text-sky-600'">{{ item.risk }}</span></div></template>
               </div>
@@ -344,7 +344,7 @@ const title = '启动场景'
         </div>
 
         <footer class="h-8 shrink-0">
-          <div v-if="exporting" class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/70 dark:bg-slate-900"><div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${exportProgress}%` }"></div></div>
+          <div v-if="exporting" class="mt-3 h-1.5 overflow-hidden rounded-full bg-white dark:bg-slate-900"><div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${exportProgress}%` }"></div></div>
           <p v-else class="mt-3 text-[12px] text-slate-500">{{ workspace.toast }}</p>
         </footer>
       </section>
