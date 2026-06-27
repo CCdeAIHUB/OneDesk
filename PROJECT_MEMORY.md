@@ -31,6 +31,11 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - The product has a desktop side and a mobile side.
 - The desktop side is responsible for execution, mobile interface design, backend flow handling, and core control logic.
 - The mobile side displays the designed interface and sends user operations to the desktop side for control.
+- Core desktop design concepts are `Component`, `Page`, and `Scheme`.
+- Containment direction:
+  - A scheme contains pages.
+  - A page contains components.
+  - A component contains actions and Vue 3 component files/configuration.
 
 ## Release Scope
 
@@ -71,6 +76,36 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Android native shell language: Kotlin.
 - iOS native shell direction: Swift plus WKWebView.
 - iOS is included in the product scope, but current routine validation only requires Android unless the user changes the validation rule.
+- A mobile device can save many desktop connection records, but can only maintain one active desktop connection at the same time.
+- Every mobile app launch opens the connection screen first.
+- The connection screen supports entering desktop IP, port, and a 6-digit verification code.
+- The connection screen shows previously connected desktop devices.
+- After connecting, the mobile side checks the cached scheme for that desktop. If the scheme has updates, it updates the cache first; otherwise it displays the cached scheme directly.
+- The mobile side must cache the corresponding scheme before displaying it.
+
+## Device Identity And Connection
+
+- A desktop can connect to multiple mobile devices at the same time.
+- A desktop assigns an ID to each mobile device and to itself for identity recognition.
+- During connection setup, the desktop sends the assigned identity information to the newly connected mobile device.
+- The 6-digit verification code is only used for initial pairing and for exchanging a long-term trust credential.
+- The pairing verification code should have an expiry time, attempt limits, and should become invalid after successful use.
+- After successful pairing, future connections should use the long-term trust credential instead of asking for the 6-digit verification code again.
+- OneDesk is mainly designed for LAN usage.
+- Public network usage may be possible, but users must build their own public network access and security protection. The software itself does not provide public network exposure or public network security hardening.
+
+## Logging
+
+- OneDesk requires a detailed logging system.
+- Logs are primarily stored on the desktop side.
+- The mobile side only stores logs while disconnected.
+- When a mobile device connects to a desktop, it sends logs recorded during the disconnected period to the desktop and then clears its local disconnected logs.
+
+## Scheme Cache Consistency
+
+- Mobile scheme cache updates must use versioning plus integrity checks.
+- Scheme cache update metadata should include at least a version and content hash.
+- Scheme cache replacement should be atomic so a failed or interrupted update does not leave a broken scheme as the active cache.
 
 ## Repository Structure
 
@@ -93,6 +128,131 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Desktop and mobile communicate using QUIC over UDP.
 - QUIC implementation choice: MsQuic.
 - Protocol definitions should use schema-driven definitions that can generate or synchronize types for C#, Kotlin, Swift, and TypeScript.
+
+## JSAPI
+
+- All shells expose system capabilities to frontend code through JSAPI.
+- A shell only implements capabilities that are supported by its host system and by the OneDesk shell on that system.
+- Unsupported capabilities must still be callable through a consistent API shape, but must return a clear unsupported-capability error instead of silently failing.
+- Every JSAPI call must include a target device ID.
+- If the target device ID is the current device's own ID, the shell intercepts and executes the JSAPI call locally.
+- If the target device ID is not the current device's own ID, the shell forwards the JSAPI call.
+- The desktop acts as the JSAPI gateway/router.
+- Mobile-to-mobile JSAPI calls must be routed through the connected desktop. Mobile devices do not directly send JSAPI calls to each other.
+- JSAPI calls should carry a calling source identity such as component ID, plugin ID, scheme ID, and target device ID so permissions can be enforced.
+
+## JSAPI Routing Rules
+
+- If the target device is offline, return a target-offline error.
+- If the target device exists but the caller lacks permission for the capability, return a permission-denied error.
+- If the target device or target capability does not exist, return a not-found or unsupported-capability error as appropriate.
+- The desktop must log cross-device JSAPI calls, including mobile-to-mobile calls routed through the desktop.
+- Sensitive mobile-to-mobile capabilities such as files, sensors, clipboard, and other private device resources must require explicit permission grants.
+
+## Permission Model
+
+- JSAPI capabilities are categorized into major categories and sub-capabilities.
+- Example category: file management.
+- Example sub-capabilities: file read, file modify, file delete.
+- If a major category is granted, all sub-capabilities under it are granted.
+- If a major category is not granted, sub-capabilities are denied by default.
+- If a major category is not granted but an individual sub-capability is granted, only that sub-capability is allowed.
+- Permission management applies to components and plugins.
+- Frontend bridge code itself does not require separate user-facing permission management, but JSAPI execution must still be authorized using the calling source identity.
+
+## Components
+
+- Components require a component management page and a component editing page.
+- A component is a Vue 3 component.
+- Component file structure should be consistent with normal Vue 3 component project structure.
+- Component editing supports visual editing and code editing.
+- Visual editing generates Vue 3 component code.
+- Visual editing must also maintain a separate configuration file so the visual editor can restore saved input values and controls.
+- Visual editing supports normal styles:
+  - Background: solid color, gradient, image, video.
+  - Inserted image: size, position, margin, centered layout.
+  - Inserted text: font, color, size, position.
+  - Locked style.
+  - Pressed style.
+  - Action system configuration.
+- Hover style is removed because mobile touch devices do not reliably support hover.
+- Code editing is a Vue 3 component development interface similar to VS Code, with a file tree on the left and code editor on the right.
+- Switching from visual editing to code editing is irreversible because arbitrary code cannot be restored into visual editor configuration.
+- Before switching from visual editing to code editing, show a confirmation dialog warning that the component cannot return to visual editing.
+- Both visual editing and code editing must include a preview window.
+- The preview content area must use overflow-hidden behavior so component content cannot overflow the parent preview container.
+- The preview window supports configurable preview ratios such as 1:1, 2:3, and 4:6.
+- Components support import and export as compressed packages.
+- Import must support Vue 3 component projects edited by external editors.
+- If an imported package is a valid visual-editor project and has no validation errors, it can continue to use visual editing.
+- If an imported package is a plain Vue 3 component project or a project that has entered code editing, it cannot enter visual editing.
+
+## Action System
+
+- The action system does not have standalone action management and action editing pages by default.
+- The action system appears as a dialog inside component visual editing, and may also appear as a categorized settings subpage.
+- A component can contain multiple actions.
+- One action can have exactly one trigger.
+- Within the same component, triggers must be unique. Multiple actions in the same component cannot use the same trigger.
+- Actions can be saved and reused by other components.
+- Reusing an action copies or references the action definition for that component's own use, but does not create runtime linkage between components.
+- When a component's action is triggered, only that component's own action executes. Other components with reused action definitions are not triggered.
+- Action execution can call JSAPI capabilities.
+- The action system exists only in visual editing. In code editing, users manually write related logic.
+
+## Trigger Priority
+
+- Trigger conflicts are resolved by priority:
+  - Component trigger first.
+  - Page-specific trigger second.
+  - Scheme global trigger third.
+- If a component consumes a trigger inside its hit area, the page or scheme trigger should not run.
+- If a component does not consume the trigger, the trigger can bubble to page-specific behavior and then to scheme global behavior.
+
+## Touch And Device Triggers
+
+- Touch triggers should be organized into standard stable triggers, platform-limited triggers, and device sensor triggers.
+- Support scope is five fingers or fewer.
+- Standard touch triggers should include tap, double tap, long press, press and hold, swipe up/down/left/right, horizontal swipe, vertical swipe, pinch in/out, rotate, and multi-finger variants from one to five fingers where platform support allows.
+- Multi-finger directional triggers should include two-finger, three-finger, four-finger, and five-finger swipes in up/down/left/right directions where platform support allows.
+- Platform-limited triggers must return unsupported-capability or unsupported-trigger feedback when the host platform cannot reliably provide them.
+- Device sensor triggers may include shake, orientation change, tilt direction, and similar device-supported motion/orientation events where the host platform allows them.
+
+## Pages
+
+- Pages require a page management page and a page editing page.
+- Pages support import and export.
+- Page export must package the page and all components contained by that page.
+- A page is a standalone full-screen app page on mobile.
+- A page contains a grid matrix similar to Tailwind CSS grid.
+- Users can set grid row count and column count.
+- Users can set page padding. If page padding is absent, the grid matrix is centered by default.
+- Users can set row gap and column gap.
+- Users can uniformly or individually set grid cell corner radius and outline style, including outline color, width, and style.
+- Users can set page background as solid color, gradient, image, or video.
+- Grid cells can span multiple rows and columns similar to Tailwind CSS `col-span` and `row-span`.
+- Grid cells can bind components.
+- Component content must not overflow the grid cell container.
+
+## Schemes
+
+- A scheme is composed of multiple pages.
+- A scheme has a page list that supports adding pages, deleting pages, and reordering pages.
+- Page order is top-to-bottom in the editor and maps to previous/next page order.
+- A scheme can set global page switching triggers using the same trigger model as component actions.
+- Page switching is cyclic:
+  - The previous page of the first page is the last page.
+  - The next page of the last page is the first page.
+- A scheme can set global page switching animations such as fade in/out.
+- Individual pages can define page-specific switching behavior, such as swiping on page 3 to switch to page 6.
+- Individual page switching can also set its own animation.
+- Scheme editing UI requires a flowchart on the right side.
+- Flowchart nodes are pages.
+- Flowchart edges represent page switching relationships.
+- Each edge displays the switching trigger and animation effect.
+- A scheme is the only final artifact that can be applied to a mobile device.
+- Each mobile device can have only one active applied scheme at the same time.
+- Applying a new scheme to a mobile device replaces the old scheme.
 
 ## Pairing Direction
 
