@@ -528,14 +528,15 @@ public sealed class MainForm : Form
         var theme = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : "light";
         var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
         var color = dark ? Color.Black : Color.FromArgb(248, 252, 255);
-        Opacity = 1d;
+        Opacity = 0.96d;
         BackColor = color;
         foreach (var handle in _resizeHandles)
         {
             handle.BackColor = color;
         }
 
-        ApplyDwmBackdrop(dark);
+        ApplyDwmTheme(dark);
+        ApplyRoundedWindow();
         return new BridgeResponse(message.RequestId, true, null);
     }
 
@@ -578,7 +579,7 @@ public sealed class MainForm : Form
         AppDiagnostics.Write("Loading surface removed.");
     }
 
-    private void ApplyDwmBackdrop(bool dark)
+    private void ApplyDwmTheme(bool dark)
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10))
         {
@@ -589,81 +590,19 @@ public sealed class MainForm : Form
         {
             var darkMode = dark ? 1 : 0;
             _ = DwmSetWindowAttribute(Handle, DwmwaUseImmersiveDarkMode, ref darkMode, sizeof(int));
-
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
-            {
-                var backdropType = dark ? DwmSystemBackdropAcrylic : DwmSystemBackdropMica;
-                _ = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType, ref backdropType, sizeof(int));
-            }
-
-            ApplyAcrylicAccent(dark);
         }
         catch
         {
-            // DWM backdrop support varies by Windows build; WebView remains usable without it.
-        }
-    }
-
-    private void ApplyAcrylicAccent(bool dark)
-    {
-        var accent = new AccentPolicy
-        {
-            AccentState = AccentEnableAcrylicBlurBehind,
-            AccentFlags = 2,
-            GradientColor = dark ? unchecked((int)0x70000000) : unchecked((int)0x66F8FCFF)
-        };
-        var accentSize = Marshal.SizeOf<AccentPolicy>();
-        var accentPtr = Marshal.AllocHGlobal(accentSize);
-
-        try
-        {
-            Marshal.StructureToPtr(accent, accentPtr, false);
-            var data = new WindowCompositionAttributeData
-            {
-                Attribute = WcaAccentPolicy,
-                Data = accentPtr,
-                SizeOfData = accentSize
-            };
-            _ = SetWindowCompositionAttribute(Handle, ref data);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(accentPtr);
+            // DWM dark-mode support varies by Windows build; WebView remains usable without it.
         }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private const int DwmwaUseImmersiveDarkMode = 20;
-    private const int DwmwaSystemBackdropType = 38;
-    private const int DwmSystemBackdropMica = 2;
-    private const int DwmSystemBackdropAcrylic = 3;
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
-
-    private const int WcaAccentPolicy = 19;
-    private const int AccentEnableAcrylicBlurBehind = 4;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct AccentPolicy
-    {
-        public int AccentState;
-        public int AccentFlags;
-        public int GradientColor;
-        public int AnimationId;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct WindowCompositionAttributeData
-    {
-        public int Attribute;
-        public nint Data;
-        public int SizeOfData;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowCompositionAttribute(nint hwnd, ref WindowCompositionAttributeData data);
 
     private const string NativeBridgeScript = """
 (() => {
