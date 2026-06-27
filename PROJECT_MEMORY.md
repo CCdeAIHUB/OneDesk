@@ -27,6 +27,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 ## Product Summary
 
 - OneDesk is a control software project conceptually similar to Stream Deck-style control software, but it must not copy Stream Deck's design or implementation.
+- Official product display name: `OneDesk`.
 - The product has a desktop side and a mobile side.
 - The desktop side is responsible for execution, mobile interface design, backend flow handling, and core control logic.
 - The mobile side displays the designed interface and sends user operations to the desktop side for control.
@@ -56,6 +57,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
   - Frontend content with partial transparency.
   - Final visual effect should support a semi-transparent frosted-glass style background.
   - This capability must be verified carefully across desktop platforms because platform support may differ.
+- Desktop frontend and mobile frontend are separate Vue 3 projects because the desktop side is a designer/configuration/control app while the mobile side is a control surface display.
 
 ## Mobile Architecture
 
@@ -69,6 +71,18 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - iOS native shell direction: Swift plus WKWebView.
 - iOS is included in the product scope, but current routine validation only requires Android unless the user changes the validation rule.
 
+## Repository Structure
+
+- Use a monorepo structure.
+- Planned top-level structure:
+  - `apps/desktop`
+  - `apps/mobile/android`
+  - `apps/mobile/ios`
+  - `frontends/desktop`
+  - `frontends/mobile`
+  - `packages/protocol`
+  - `docs`
+
 ## Frontend And Networking Constraints
 
 - Desktop shell and mobile shell must load frontend assets using `file://`.
@@ -76,6 +90,12 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - All network communication must be forwarded through native shells.
 - Desktop and mobile communicate using QUIC over UDP.
 - QUIC implementation choice: MsQuic.
+
+## Pairing Direction
+
+- Pairing will support manual IP input plus verification code.
+- Pairing will support QR-code scanning.
+- Detailed pairing behavior is not finalized yet and will be described by the user later.
 
 ## Locked Modules
 
@@ -85,3 +105,5 @@ This file records confirmed project decisions and constraints. Keep it updated w
 
 - Confirm desktop Chromium integration package after prototype validation.
 - Confirm CI matrix and release artifact strategy.
+- User will describe desktop action capability boundaries later.
+- User will describe plugin system requirements later.
