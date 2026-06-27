@@ -18,6 +18,7 @@ public sealed class MainWindow : Window
         MinHeight = 720;
         ExtendClientAreaToDecorationsHint = true;
         ExtendClientAreaChromeHints = Avalonia.Platform.ExtendClientAreaChromeHints.NoChrome;
+        SystemDecorations = SystemDecorations.None;
         TransparencyLevelHint =
         [
             WindowTransparencyLevel.Mica,
@@ -25,7 +26,7 @@ public sealed class MainWindow : Window
             WindowTransparencyLevel.Blur,
             WindowTransparencyLevel.Transparent
         ];
-        Background = new SolidColorBrush(Color.FromArgb(160, 240, 249, 255));
+        Background = Brushes.Transparent;
 
         var code = pairing.GenerateVerificationCode();
         var qrPayload = pairing.CreateQrPayload("127.0.0.1", 48320, code);
@@ -33,10 +34,9 @@ public sealed class MainWindow : Window
 
         Content = new Border
         {
-            Margin = new Thickness(14),
-            CornerRadius = new CornerRadius(24),
-            Background = Brushes.White,
-            BoxShadow = BoxShadows.Parse("0 24 80 0 #220EA5E9"),
+            Margin = new Thickness(0),
+            CornerRadius = new CornerRadius(0),
+            Background = new SolidColorBrush(Color.FromArgb(232, 248, 252, 255)),
             Child = new Grid
             {
                 RowDefinitions = RowDefinitions.Parse("Auto,*"),
