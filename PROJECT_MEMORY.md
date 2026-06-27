@@ -62,6 +62,12 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Mobile shell uses each target platform's native language.
 - Mobile frontend uses Vue 3.
 - Android is part of the required validation scope.
+- Mobile platforms included in this version:
+  - Android
+  - iOS
+- Android native shell language: Kotlin.
+- iOS native shell direction: Swift plus WKWebView.
+- iOS is included in the product scope, but current routine validation only requires Android unless the user changes the validation rule.
 
 ## Frontend And Networking Constraints
 
@@ -77,7 +83,5 @@ This file records confirmed project decisions and constraints. Keep it updated w
 
 ## Open Questions
 
-- Confirm complete mobile platform list for this version.
 - Confirm desktop Chromium integration package after prototype validation.
-- Confirm exact Android native language choice.
 - Confirm CI matrix and release artifact strategy.
