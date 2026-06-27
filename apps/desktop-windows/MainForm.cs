@@ -1,5 +1,4 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -210,15 +209,10 @@ public sealed class MainForm : Form
             return;
         }
 
-        using var path = new GraphicsPath();
-        var bounds = new Rectangle(0, 0, Width, Height);
         var diameter = CornerRadius * 2;
-        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
-        path.CloseFigure();
-        Region = new Region(path);
+        var regionHandle = CreateRoundRectRgn(0, 0, ClientSize.Width + 1, ClientSize.Height + 1, diameter, diameter);
+        Region = Region.FromHrgn(regionHandle);
+        DeleteObject(regionHandle);
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -229,6 +223,12 @@ public sealed class MainForm : Form
 
     [DllImport("user32.dll")]
     private static extern nint SendMessage(nint hWnd, int message, int wParam, int lParam);
+
+    [DllImport("gdi32.dll")]
+    private static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom, int widthEllipse, int heightEllipse);
+
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(nint hObject);
 
     private const int WmNcLButtonDown = 0x00A1;
 
@@ -591,6 +591,12 @@ public sealed class MainForm : Form
         {
             var darkMode = dark ? 1 : 0;
             _ = DwmSetWindowAttribute(Handle, DwmwaUseImmersiveDarkMode, ref darkMode, sizeof(int));
+
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                var cornerPreference = DwmWindowCornerPreferenceRound;
+                _ = DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref cornerPreference, sizeof(int));
+            }
         }
         catch
         {
@@ -601,6 +607,8 @@ public sealed class MainForm : Form
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaWindowCornerPreference = 33;
+    private const int DwmWindowCornerPreferenceRound = 2;
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);

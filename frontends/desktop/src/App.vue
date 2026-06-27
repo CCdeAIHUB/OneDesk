@@ -79,7 +79,7 @@ function startExport() {
 
 <template>
   <main class="h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100" @pointerdown="handleWindowDrag">
-    <section class="app-shell flex h-full min-h-[720px] min-w-[1120px] overflow-hidden">
+    <section class="app-shell flex h-full min-h-[720px] min-w-[1120px] overflow-hidden bg-white/75 backdrop-blur-2xl dark:bg-black/80">
       <aside class="flex w-[96px] shrink-0 items-start justify-center py-9">
         <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950">
           <button
