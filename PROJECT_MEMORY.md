@@ -23,6 +23,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Required validation targets for each change:
   - Current Codex system environment version.
   - Android version.
+- After pushing, do not wait for GitHub CI completion unless the user explicitly asks to wait. Local validation remains required when possible.
 
 ## Product Summary
 

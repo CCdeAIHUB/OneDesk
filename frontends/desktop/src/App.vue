@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { Icon } from "@iconify/vue";
-import { computed, reactive, ref } from "vue";
-
-type ViewKey = "home" | "component" | "page" | "scheme" | "plugin" | "permission" | "log";
-type ThemeMode = "light" | "dark" | "system";
-type SectionRoute = "manager" | "editor";
+import { computed, ref } from "vue";
+import type { SectionRoute, ThemeMode, ViewKey } from "./domain";
+import { components, logs, navItems, pages, permissions, quickActions, quickStart, schemes, workspace } from "./workspace";
 
 const activeView = ref<ViewKey>("home");
 const theme = ref<ThemeMode>("system");
@@ -17,62 +15,6 @@ const showCodeSwitchDialog = ref(false);
 const exporting = ref(false);
 const exportProgress = ref(0);
 
-const state = reactive({
-  activeScheme: "直播控制台",
-  selectedDevice: "OneDesk Stream Deck",
-  toast: "方案缓存已校验",
-});
-
-const navItems: Array<{ key: ViewKey; label: string; icon: string }> = [
-  { key: "home", label: "首页", icon: "solar:widget-2-bold-duotone" },
-  { key: "component", label: "组件", icon: "solar:card-bold-duotone" },
-  { key: "page", label: "页面", icon: "solar:layers-bold-duotone" },
-  { key: "scheme", label: "方案", icon: "solar:play-square-bold-duotone" },
-  { key: "plugin", label: "插件", icon: "solar:puzzle-bold-duotone" },
-  { key: "permission", label: "设置", icon: "solar:settings-bold-duotone" },
-  { key: "log", label: "账户", icon: "solar:user-rounded-bold-duotone" },
-];
-
-const quickActions = [
-  { label: "创建新方案", icon: "solar:add-circle-bold-duotone", color: "text-sky-500" },
-  { label: "导入方案", icon: "solar:download-minimalistic-bold-duotone", color: "text-green-500" },
-  { label: "打开动作编辑器", icon: "solar:bolt-bold-duotone", color: "text-violet-500" },
-];
-
-const quickStart = [
-  { label: "连接新设备", desc: "连接并设置新的控制设备", icon: "solar:usb-bold-duotone", color: "text-sky-500" },
-  { label: "浏览插件", desc: "扩展你的 OneDesk 能力", icon: "solar:puzzle-bold-duotone", color: "text-green-500" },
-  { label: "使用帮助", desc: "查看使用文档和教程", icon: "solar:question-circle-bold-duotone", color: "text-violet-500" },
-];
-
-const components = [
-  { name: "场景切换", mode: "可视化", actions: 3, ratio: "1:1", status: "已授权" },
-  { name: "音量推子", mode: "代码", actions: 5, ratio: "2:3", status: "缺少插件" },
-  { name: "素材标记", mode: "可视化", actions: 4, ratio: "1:1", status: "待确认" },
-  { name: "专注计时", mode: "可视化", actions: 2, ratio: "4:6", status: "已授权" },
-];
-
-const pages = [
-  { name: "采集", grid: "4 x 3", components: 9, background: "渐变" },
-  { name: "直播", grid: "5 x 3", components: 12, background: "视频" },
-  { name: "剪辑", grid: "4 x 4", components: 10, background: "纯色" },
-  { name: "系统", grid: "3 x 3", components: 6, background: "图片" },
-];
-
-const schemes = [
-  { name: "直播控制台", pages: 4, devices: 1, status: "已应用" },
-  { name: "剪辑工作台", pages: 3, devices: 0, status: "未应用" },
-  { name: "游戏配置", pages: 5, devices: 1, status: "有更新" },
-];
-
-const permissions = [
-  { id: "file.writeExternal", category: "文件管理", label: "修改私有目录外文件", risk: "高危" },
-  { id: "plugin.invoke", category: "插件", label: "调用桌面端插件方法", risk: "普通" },
-  { id: "notification.native", category: "通知", label: "发送系统通知", risk: "普通" },
-  { id: "input.keyboardMouseSimulation", category: "输入控制", label: "模拟键盘和鼠标", risk: "高危" },
-];
-
-const logs = ["小米平板 6 已连接", "断联日志已上传，共 12 条", "OBS Control 插件权限已更新", "页面切换动画已保存"];
 const viewTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label ?? "首页");
 
 function openView(view: ViewKey) {
@@ -98,7 +40,7 @@ function startExport() {
       window.clearInterval(timer);
       window.setTimeout(() => {
         exporting.value = false;
-        state.toast = "导出完成";
+        workspace.toast = "导出完成";
       }, 420);
     }
   }, 180);
@@ -136,11 +78,11 @@ function startExport() {
               <input class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400" placeholder="搜索（设备、方案、动作等）" />
             </label>
 
-            <div class="theme-switch group relative">
-              <button class="grid size-8 place-items-center rounded-full text-slate-500 hover:bg-white/80 dark:text-slate-300 dark:hover:bg-slate-900" title="主题">
+            <div class="group flex h-8 w-8 items-center justify-end overflow-hidden rounded-full transition-all duration-200 hover:w-[116px] hover:bg-white/92 hover:px-1.5 hover:shadow-lg hover:shadow-slate-950/10 dark:hover:bg-slate-900/92">
+              <button class="grid size-8 shrink-0 place-items-center rounded-full text-slate-500 dark:text-slate-300" title="主题">
                 <Icon :icon="theme === 'dark' ? 'solar:moon-bold-duotone' : theme === 'light' ? 'solar:sun-2-bold-duotone' : 'solar:monitor-bold-duotone'" class="size-4" />
               </button>
-              <div class="pointer-events-none absolute right-0 top-9 flex translate-y-1 items-center gap-2 rounded-full bg-white/92 px-2 py-1.5 opacity-0 shadow-lg shadow-slate-950/10 transition group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 dark:bg-slate-900/92">
+              <div class="flex w-0 items-center gap-1 overflow-hidden opacity-0 transition-all duration-200 group-hover:w-[78px] group-hover:opacity-100">
                 <button class="theme-dot" :class="theme === 'light' ? 'theme-dot-active' : ''" title="浅色" @click="setTheme('light')">
                   <Icon icon="solar:sun-2-bold-duotone" class="size-4" />
                 </button>
@@ -182,7 +124,7 @@ function startExport() {
                   <span v-for="index in 9" :key="index" class="rounded-[3px] bg-slate-600"></span>
                 </div>
                 <div class="min-w-0 flex-1">
-                  <p class="truncate text-[14px] font-semibold">{{ state.selectedDevice }}</p>
+                  <p class="truncate text-[14px] font-semibold">{{ workspace.selectedDevice }}</p>
                   <p class="mt-2 text-[12px] text-slate-500 dark:text-slate-400">15 按键</p>
                   <p class="mt-1 flex items-center gap-1 text-[12px] text-green-600"><Icon icon="solar:battery-charge-bold-duotone" class="size-4" />100%</p>
                 </div>
@@ -233,16 +175,28 @@ function startExport() {
           <section v-else-if="activeView === 'component'" class="grid h-full grid-cols-[260px_1fr_260px] gap-4">
             <aside class="soft-card p-4">
               <button class="mb-4 flex items-center gap-2 text-[12px] text-sky-600" @click="componentRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回组件管理</button>
-              <h2 class="text-[16px] font-semibold">场景切换</h2>
-              <p class="mt-1 text-[12px] text-slate-500">可视化组件 · 1:1</p>
-              <div class="mt-5 grid gap-2">
+              <template v-if="componentEditorMode === 'visual'">
+                <h2 class="text-[16px] font-semibold">场景切换</h2>
+                <p class="mt-1 text-[12px] text-slate-500">可视化组件 · 1:1</p>
+                <div class="mt-5 grid gap-2">
                 <button class="editor-nav-active">基础样式</button>
                 <button class="editor-nav">背景与媒体</button>
                 <button class="editor-nav">文字与图标</button>
                 <button class="editor-nav">锁定/按下状态</button>
                 <button class="editor-nav">动作系统</button>
                 <button class="editor-nav" @click="showPermissionDialog = true">权限声明</button>
-              </div>
+                </div>
+              </template>
+              <template v-else>
+                <h2 class="text-[16px] font-semibold">文件</h2>
+                <p class="mt-1 text-[12px] text-slate-500">场景切换组件目录</p>
+                <div class="mt-5 grid gap-1.5 text-[12px]">
+                  <button class="file-row file-row-active"><Icon icon="solar:file-text-bold-duotone" class="size-4" />SceneButton.vue</button>
+                  <button class="file-row"><Icon icon="solar:code-file-bold-duotone" class="size-4" />actions.ts</button>
+                  <button class="file-row"><Icon icon="solar:code-file-bold-duotone" class="size-4" />onedesk.component.json</button>
+                  <button class="file-row"><Icon icon="solar:folder-bold-duotone" class="size-4" />assets</button>
+                </div>
+              </template>
             </aside>
 
             <section class="soft-card min-w-0 p-4">
@@ -366,7 +320,7 @@ const title = '启动场景'
 
         <footer class="h-8 shrink-0">
           <div v-if="exporting" class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/70 dark:bg-slate-900"><div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${exportProgress}%` }"></div></div>
-          <p v-else class="mt-3 text-[12px] text-slate-500">{{ state.toast }}</p>
+          <p v-else class="mt-3 text-[12px] text-slate-500">{{ workspace.toast }}</p>
         </footer>
       </section>
     </section>

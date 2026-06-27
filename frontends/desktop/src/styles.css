@@ -96,8 +96,8 @@ textarea {
 
 .theme-dot {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   border-radius: 999px;
   color: rgb(100 116 139);
@@ -126,4 +126,25 @@ textarea {
 .editor-nav-active {
   background: rgb(14 165 233);
   color: white;
+}
+
+.file-row,
+.file-row-active {
+  display: flex;
+  height: 32px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.file-row {
+  color: rgb(100 116 139);
+}
+
+.file-row:hover,
+.file-row-active {
+  background: rgb(14 165 233 / 0.12);
+  color: rgb(2 132 199);
 }
