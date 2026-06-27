@@ -33,6 +33,103 @@ This directory is intentionally complete at the category level from the start. I
 | `scheme` | active scheme info, page switch | yes | yes | yes | no |
 | `log` | write structured log | yes | yes | yes | no |
 
+## Desktop Capability IDs
+
+- `device.identity`
+- `device.platform`
+- `device.display.list`
+- `device.power.status`
+- `file.private.read`
+- `file.private.write`
+- `file.private.delete`
+- `file.external.read`
+- `file.external.write`
+- `file.external.delete`
+- `clipboard.read`
+- `clipboard.write`
+- `notification.inApp`
+- `notification.native`
+- `input.hotkey.register`
+- `input.hotkey.unregister`
+- `input.keyboardMouseSimulation`
+- `process.launch`
+- `process.list`
+- `process.control`
+- `shell.execute`
+- `memory.read`
+- `memory.write`
+- `network.access`
+- `camera.access`
+- `microphone.access`
+- `screen.capture`
+- `screen.record`
+- `credential.access`
+- `plugin.invoke`
+- `scheme.active.get`
+- `scheme.page.switch`
+- `scheme.cache.status`
+- `log.write`
+
+## Android Capability IDs
+
+- `device.identity`
+- `device.platform`
+- `device.display.list`
+- `device.power.status`
+- `file.private.read`
+- `file.private.write`
+- `file.private.delete`
+- `file.external.read`
+- `file.external.write`
+- `clipboard.read`
+- `clipboard.write`
+- `notification.inApp`
+- `notification.native`
+- `input.keyboardMouseSimulation`
+- `network.access`
+- `sensor.accelerometer`
+- `sensor.gyroscope`
+- `sensor.orientation`
+- `camera.access`
+- `microphone.access`
+- `screen.capture`
+- `credential.access`
+- `plugin.invoke`
+- `scheme.active.get`
+- `scheme.page.switch`
+- `scheme.cache.status`
+- `log.write`
+
+Unsupported Android calls include process control, shell execution, memory read/write, and any capability blocked by Android sandbox or user permission state.
+
+## iOS Capability IDs
+
+- `device.identity`
+- `device.platform`
+- `device.display.list`
+- `device.power.status`
+- `file.private.read`
+- `file.private.write`
+- `file.private.delete`
+- `clipboard.read`
+- `clipboard.write`
+- `notification.inApp`
+- `notification.native`
+- `sensor.accelerometer`
+- `sensor.gyroscope`
+- `sensor.orientation`
+- `camera.access`
+- `microphone.access`
+- `screen.capture`
+- `credential.access`
+- `plugin.invoke`
+- `scheme.active.get`
+- `scheme.page.switch`
+- `scheme.cache.status`
+- `log.write`
+
+Unsupported iOS calls include external file deletion/modification outside allowed pickers, process control, shell execution, memory read/write, keyboard/mouse simulation, and any capability blocked by iOS sandbox or user permission state.
+
 ## Registration Rule
 
 Every shell registers supported capabilities at startup with capability ID, permission category, risk level, platform support, and handler metadata. Unsupported platform capabilities still keep a stable API identity and return `CapabilityNotSupported`.
