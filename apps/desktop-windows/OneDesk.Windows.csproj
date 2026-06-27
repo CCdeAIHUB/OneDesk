@@ -20,6 +20,7 @@
     <Compile Include="..\desktop\Domain\*.cs" LinkBase="Domain" />
     <Compile Include="..\desktop\Storage\*.cs" LinkBase="Storage" />
     <Compile Include="..\desktop\Services\Models.cs" Link="Services\Models.cs" />
+    <Compile Include="..\desktop\Services\CapabilityDirectoryService.cs" Link="Services\CapabilityDirectoryService.cs" />
     <Compile Include="..\desktop\Services\DeviceRegistry.cs" Link="Services\DeviceRegistry.cs" />
     <Compile Include="..\desktop\Services\FrontendNetworkPolicy.cs" Link="Services\FrontendNetworkPolicy.cs" />
     <Compile Include="..\desktop\Services\JsApiRouter.cs" Link="Services\JsApiRouter.cs" />

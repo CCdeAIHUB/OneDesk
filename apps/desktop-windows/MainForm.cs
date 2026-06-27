@@ -6,6 +6,7 @@ using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+using OneDesk.Desktop.Domain;
 using OneDesk.Desktop.Services;
 using OneDesk.Desktop.Storage;
 
@@ -38,6 +39,9 @@ public sealed class MainForm : Form
     private DeviceRegistry? _devices;
     private JsApiRouter? _jsApiRouter;
     private OneDeskRepository? _repository;
+    private CapabilityDirectoryService? _capabilityDirectory;
+    private PairingService? _pairing;
+    private StructuredLogStore? _logs;
     private Label? _loadingLabel;
 
     public MainForm()
@@ -164,6 +168,7 @@ public sealed class MainForm : Form
         AppDiagnostics.Write("Service initialization entered.");
         var collection = new ServiceCollection();
         collection.AddSingleton<DeviceRegistry>();
+        collection.AddSingleton<CapabilityDirectoryService>();
         collection.AddSingleton<PermissionService>();
         collection.AddSingleton<StructuredLogStore>();
         collection.AddSingleton<PairingService>();
@@ -181,6 +186,9 @@ public sealed class MainForm : Form
         _devices = _services.GetRequiredService<DeviceRegistry>();
         _jsApiRouter = _services.GetRequiredService<JsApiRouter>();
         _repository = _services.GetRequiredService<OneDeskRepository>();
+        _capabilityDirectory = _services.GetRequiredService<CapabilityDirectoryService>();
+        _pairing = _services.GetRequiredService<PairingService>();
+        _logs = _services.GetRequiredService<StructuredLogStore>();
         AppDiagnostics.Write("Core services resolved.");
         await _services.GetRequiredService<WorkspaceBootstrapper>().EnsureSeedDataAsync();
         AppDiagnostics.Write("Service initialization completed.");
@@ -379,6 +387,16 @@ public sealed class MainForm : Form
             "getDeviceId" => new BridgeResponse(message.RequestId, true, _devices?.DesktopIdentity.DeviceId),
             "callJsApi" => await HandleJsApiAsync(message),
             "workspace.list" => await HandleWorkspaceListAsync(message),
+            "workspace.saveComponent" => await HandleSaveComponentAsync(message),
+            "workspace.deleteComponent" => HandleDeleteComponent(message),
+            "workspace.savePage" => await HandleSavePageAsync(message),
+            "workspace.deletePage" => HandleDeletePage(message),
+            "workspace.saveScheme" => await HandleSaveSchemeAsync(message),
+            "workspace.deleteScheme" => HandleDeleteScheme(message),
+            "workspace.applyScheme" => await HandleApplySchemeAsync(message),
+            "capability.list" => new BridgeResponse(message.RequestId, true, _capabilityDirectory?.Categories() ?? []),
+            "pairing.generate" => HandlePairingGenerate(message),
+            "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
             "window.dragStart" => HandleWindowDragStart(message),
@@ -416,15 +434,157 @@ public sealed class MainForm : Form
     private async Task<BridgeResponse> HandleWorkspaceListAsync(BridgeMessage message)
     {
         object components = _repository is null ? Array.Empty<object>() : await _repository.ListComponentsAsync();
+        object actions = _repository is null ? Array.Empty<object>() : await _repository.ListActionsAsync();
         object pages = _repository is null ? Array.Empty<object>() : await _repository.ListPagesAsync();
         object schemes = _repository is null ? Array.Empty<object>() : await _repository.ListSchemesAsync();
+        object? activeScheme = _repository is null ? null : await _repository.GetActiveSchemeAsync();
         var payload = new
         {
             components,
+            actions,
             pages,
-            schemes
+            schemes,
+            activeScheme,
+            devices = _devices?.All() ?? []
         };
         return new BridgeResponse(message.RequestId, true, payload);
+    }
+
+    private async Task<BridgeResponse> HandleSaveComponentAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var component = DeserializePayload<ComponentDefinition>(message);
+        if (component is null)
+        {
+            return InvalidPayload(message);
+        }
+
+        await _repository.SaveComponentAsync(component);
+        return new BridgeResponse(message.RequestId, true, component);
+    }
+
+    private BridgeResponse HandleDeleteComponent(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        _repository.DeleteComponent(id);
+        return new BridgeResponse(message.RequestId, true, null);
+    }
+
+    private async Task<BridgeResponse> HandleSavePageAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var page = DeserializePayload<PageDefinition>(message);
+        if (page is null)
+        {
+            return InvalidPayload(message);
+        }
+
+        await _repository.SavePageAsync(page);
+        return new BridgeResponse(message.RequestId, true, page);
+    }
+
+    private BridgeResponse HandleDeletePage(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        _repository.DeletePage(id);
+        return new BridgeResponse(message.RequestId, true, null);
+    }
+
+    private async Task<BridgeResponse> HandleSaveSchemeAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var scheme = DeserializePayload<SchemeDefinition>(message);
+        if (scheme is null)
+        {
+            return InvalidPayload(message);
+        }
+
+        await _repository.SaveSchemeAsync(scheme);
+        return new BridgeResponse(message.RequestId, true, scheme);
+    }
+
+    private BridgeResponse HandleDeleteScheme(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        _repository.DeleteScheme(id);
+        return new BridgeResponse(message.RequestId, true, null);
+    }
+
+    private async Task<BridgeResponse> HandleApplySchemeAsync(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id) || await _repository.GetSchemeAsync(id) is null)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "SchemeNotFound", "方案不存在，无法应用");
+        }
+
+        await _repository.ApplySchemeAsync(id);
+        return new BridgeResponse(message.RequestId, true, await _repository.GetActiveSchemeAsync());
+    }
+
+    private BridgeResponse HandlePairingGenerate(BridgeMessage message)
+    {
+        if (_pairing is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var host = ReadPayloadString(message, "host");
+        var port = ReadPayloadInt(message, "port", 48320);
+        var code = _pairing.GenerateVerificationCode();
+        return new BridgeResponse(message.RequestId, true, new
+        {
+            code,
+            expiresInSeconds = 300,
+            qrPayload = _pairing.CreateQrPayload(string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host, port, code)
+        });
     }
 
     private BridgeResponse HandleWindowMinimize(BridgeMessage message)
@@ -529,6 +689,51 @@ public sealed class MainForm : Form
         }
     }
 
+    private static T? DeserializePayload<T>(BridgeMessage message)
+    {
+        if (message.Payload is not { } payload || payload.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return default;
+        }
+
+        return JsonSerializer.Deserialize<T>(payload.GetRawText(), JsonOptions);
+    }
+
+    private static string? ReadPayloadString(BridgeMessage message, string key)
+    {
+        if (message.Payload is { ValueKind: JsonValueKind.Object } payload &&
+            payload.TryGetProperty(key, out var value) &&
+            value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString();
+        }
+
+        return null;
+    }
+
+    private static int ReadPayloadInt(BridgeMessage message, string key, int fallback)
+    {
+        if (message.Payload is { ValueKind: JsonValueKind.Object } payload &&
+            payload.TryGetProperty(key, out var value) &&
+            value.ValueKind == JsonValueKind.Number &&
+            value.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        return fallback;
+    }
+
+    private static BridgeResponse ShellNotReady(BridgeMessage message)
+    {
+        return new BridgeResponse(message.RequestId, false, null, "ShellNotReady", "OneDesk 壳子服务尚未初始化完成");
+    }
+
+    private static BridgeResponse InvalidPayload(BridgeMessage message)
+    {
+        return new BridgeResponse(message.RequestId, false, null, "InvalidPayload", "请求参数不完整或格式不正确");
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private const int DwmwaUseImmersiveDarkMode = 20;
@@ -585,6 +790,9 @@ public sealed class MainForm : Form
   }
 
   window.OneDeskNative = {
+    send(type, payloadJson) {
+      return send(type, payloadJson ? { payload: JSON.parse(payloadJson) } : {});
+    },
     getDeviceId() {
       return send('getDeviceId').then(raw => JSON.parse(raw).payload);
     },

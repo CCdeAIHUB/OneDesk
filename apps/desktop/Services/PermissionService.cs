@@ -5,27 +5,16 @@ namespace OneDesk.Desktop.Services;
 public sealed class PermissionService
 {
     private readonly ConcurrentDictionary<string, HashSet<string>> _grants = new();
+    private readonly CapabilityDirectoryService _capabilities;
+
+    public PermissionService(CapabilityDirectoryService capabilities)
+    {
+        _capabilities = capabilities;
+    }
 
     public bool IsHighRisk(string capability)
     {
-        return capability is
-            "file.writeExternal" or
-            "file.deleteExternal" or
-            "process.control" or
-            "memory.read" or
-            "memory.write" or
-            "input.keyboardMouseSimulation" or
-            "network.access" or
-            "clipboard.read" or
-            "clipboard.write" or
-            "camera.access" or
-            "microphone.access" or
-            "screen.capture" or
-            "screen.record" or
-            "background.persistent" or
-            "credential.access" or
-            "shell.execute" or
-            "crossDevice.sensitiveJsApi";
+        return _capabilities.IsHighRisk(capability);
     }
 
     public void Grant(string sourceKey, string capability)
@@ -52,6 +41,11 @@ public sealed class PermissionService
 
     public bool IsGranted(TrustedSource source, string capability)
     {
+        if (source.Kind == "system")
+        {
+            return true;
+        }
+
         var key = SourceKey(source);
         if (!_grants.TryGetValue(key, out var permissions))
         {

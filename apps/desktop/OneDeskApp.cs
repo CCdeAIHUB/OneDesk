@@ -20,6 +20,7 @@ public sealed partial class OneDeskApp : Application
     {
         var collection = new ServiceCollection();
         collection.AddSingleton<DeviceRegistry>();
+        collection.AddSingleton<CapabilityDirectoryService>();
         collection.AddSingleton<PermissionService>();
         collection.AddSingleton<StructuredLogStore>();
         collection.AddSingleton<PairingService>();

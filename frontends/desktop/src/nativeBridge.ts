@@ -11,16 +11,20 @@ export interface NativeBridgeResponse<T = unknown> {
   message?: string;
 }
 
+type ThemeForShell = "light" | "dark";
+
 declare global {
   interface Window {
     OneDeskNative?: {
       callJsApi?: (targetDeviceId: string, capability: string, payloadJson: string) => string | Promise<string>;
       getDeviceId?: () => string | Promise<string>;
+      listWorkspace?: () => string | Promise<string>;
       minimizeWindow?: () => string | Promise<string>;
       maximizeWindow?: () => string | Promise<string>;
       startWindowDrag?: () => string | Promise<string>;
       closeWindow?: () => string | Promise<string>;
-      setShellTheme?: (theme: "light" | "dark") => string | Promise<string>;
+      setShellTheme?: (theme: ThemeForShell) => string | Promise<string>;
+      send?: (type: string, payloadJson?: string) => string | Promise<string>;
     };
   }
 }
@@ -39,6 +43,19 @@ export async function callNative<T = unknown>(request: NativeBridgeRequest): Pro
     request.capability,
     JSON.stringify(request.payload),
   );
+  return JSON.parse(raw) as NativeBridgeResponse<T>;
+}
+
+export async function sendShell<T = unknown>(type: string, payload?: unknown): Promise<NativeBridgeResponse<T>> {
+  if (!window.OneDeskNative?.send) {
+    return {
+      ok: false,
+      errorCode: "ShellNotConnected",
+      message: "当前环境无法调用桌面壳子",
+    };
+  }
+
+  const raw = await window.OneDeskNative.send(type, payload === undefined ? undefined : JSON.stringify(payload));
   return JSON.parse(raw) as NativeBridgeResponse<T>;
 }
 
@@ -67,6 +84,6 @@ export async function closeWindow(): Promise<void> {
   await window.OneDeskNative?.closeWindow?.();
 }
 
-export async function setShellTheme(theme: "light" | "dark"): Promise<void> {
+export async function setShellTheme(theme: ThemeForShell): Promise<void> {
   await window.OneDeskNative?.setShellTheme?.(theme);
 }

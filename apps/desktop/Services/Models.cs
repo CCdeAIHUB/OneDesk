@@ -39,6 +39,25 @@ public sealed record PermissionDeclaration(
     bool HighRisk,
     string Description);
 
+public sealed record CapabilityDefinition(
+    string Id,
+    string Category,
+    string CategoryName,
+    string Name,
+    string Description,
+    bool HighRisk,
+    CapabilitySupport Desktop,
+    CapabilitySupport Android,
+    CapabilitySupport Ios);
+
+public sealed record CapabilitySupport(bool Supported, string Note);
+
+public sealed record CapabilityCategory(
+    string Id,
+    string Name,
+    bool HighRisk,
+    IReadOnlyList<CapabilityDefinition> Capabilities);
+
 public sealed record StructuredLogRecord(
     string LogId,
     DateTimeOffset CreatedAt,
