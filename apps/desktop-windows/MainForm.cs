@@ -1,5 +1,9 @@
 ﻿using System.Drawing;
 using System.IO;
+using System.IO.Compression;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,7 +23,7 @@ public sealed class MainForm : Form
     private static readonly Size InitialWindowSize = new(1200, 780);
     private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
     private const int ResizeGripSize = 10;
-    private const int CornerRadius = 22;
+    private const int CornerRadius = 24;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const int HtClient = 1;
@@ -46,6 +50,7 @@ public sealed class MainForm : Form
     private CapabilityDirectoryService? _capabilityDirectory;
     private PairingService? _pairing;
     private QuicGatewayService? _gateway;
+    private PluginHostService? _plugins;
     private StructuredLogStore? _logs;
     private Label? _loadingLabel;
 
@@ -197,6 +202,7 @@ public sealed class MainForm : Form
         _capabilityDirectory = _services.GetRequiredService<CapabilityDirectoryService>();
         _pairing = _services.GetRequiredService<PairingService>();
         _gateway = _services.GetRequiredService<QuicGatewayService>();
+        _plugins = _services.GetRequiredService<PluginHostService>();
         _logs = _services.GetRequiredService<StructuredLogStore>();
         AppDiagnostics.Write("Core services resolved.");
         await _services.GetRequiredService<WorkspaceBootstrapper>().EnsureSeedDataAsync();
@@ -407,6 +413,9 @@ public sealed class MainForm : Form
             "workspace.exportComponent" => await HandleExportComponentAsync(message),
             "workspace.exportPage" => await HandleExportPageAsync(message),
             "workspace.exportScheme" => await HandleExportSchemeAsync(message),
+            "workspace.importComponent" => HandleImportComponent(message),
+            "workspace.importPage" => HandleImportPage(message),
+            "workspace.importScheme" => HandleImportScheme(message),
             "capability.list" => new BridgeResponse(message.RequestId, true, _capabilityDirectory?.Categories() ?? []),
             "permission.list" => new BridgeResponse(message.RequestId, true, new
             {
@@ -417,8 +426,11 @@ public sealed class MainForm : Form
             "permission.revoke" => HandlePermissionRevoke(message),
             "pairing.generate" => HandlePairingGenerate(message),
             "device.status" => HandleDeviceStatus(message),
+            "device.rename" => HandleDeviceRename(message),
             "gateway.status" => HandleGatewayStatus(message),
             "scheme.cacheManifest" => await HandleSchemeCacheManifestAsync(message),
+            "plugin.list" => new BridgeResponse(message.RequestId, true, _plugins?.InstalledPlugins ?? []),
+            "plugin.import" => await HandlePluginImportAsync(message),
             "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
@@ -661,6 +673,51 @@ public sealed class MainForm : Form
         }
     }
 
+    private BridgeResponse HandleImportComponent(BridgeMessage message)
+    {
+        return ImportPackage(message, "组件包", "OneDesk Component Package (*.zip;*.onedesk-component)|*.zip;*.onedesk-component", path => _packages!.ImportComponent(path));
+    }
+
+    private BridgeResponse HandleImportPage(BridgeMessage message)
+    {
+        return ImportPackage(message, "页面包", "OneDesk Page Package (*.zip;*.onedesk-page)|*.zip;*.onedesk-page", path => _packages!.ImportPage(path));
+    }
+
+    private BridgeResponse HandleImportScheme(BridgeMessage message)
+    {
+        return ImportPackage(message, "方案包", "OneDesk Scheme Package (*.zip;*.onedesk-scheme)|*.zip;*.onedesk-scheme", path => _packages!.ImportScheme(path, new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+    }
+
+    private BridgeResponse ImportPackage(BridgeMessage message, string title, string filter, Func<string, PackageImportResult> importer)
+    {
+        if (_packages is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        using var dialog = new OpenFileDialog
+        {
+            Title = $"导入{title}",
+            Filter = $"{filter}|All Files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "UserCancelled", "已取消导入");
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, importer(dialog.FileName));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ImportFailed", ex.Message);
+        }
+    }
+
     private BridgeResponse HandlePermissionGrant(BridgeMessage message)
     {
         var sourceKey = ReadPayloadString(message, "sourceKey");
@@ -699,14 +756,38 @@ public sealed class MainForm : Form
 
     private BridgeResponse HandleDeviceStatus(BridgeMessage message)
     {
+        var mobileDevices = (_devices?.All() ?? [])
+            .Where(device => device.Kind == DeviceKind.Mobile)
+            .ToArray();
         return new BridgeResponse(message.RequestId, true, new
         {
             desktop = _devices?.DesktopIdentity,
-            devices = _devices?.All() ?? [],
+            devices = mobileDevices,
             trusted = _pairing?.TrustedDevices() ?? [],
             gateway = GatewayPayload(),
+            localIps = GetLocalIpv4Addresses(),
             logs = _logs?.Recent(80) ?? []
         });
+    }
+
+    private BridgeResponse HandleDeviceRename(BridgeMessage message)
+    {
+        var deviceId = ReadPayloadString(message, "deviceId");
+        var remark = ReadPayloadString(message, "remark") ?? string.Empty;
+        if (_pairing is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return InvalidPayload(message);
+        }
+
+        var renamed = _pairing.RenameTrustedDevice(deviceId, remark);
+        return renamed is null
+            ? new BridgeResponse(message.RequestId, false, null, "DeviceNotFound", "未找到该移动设备")
+            : new BridgeResponse(message.RequestId, true, renamed);
     }
 
     private BridgeResponse HandleGatewayStatus(BridgeMessage message)
@@ -770,8 +851,64 @@ public sealed class MainForm : Form
         {
             running = _gateway?.IsRunning ?? false,
             port = _gateway?.Port ?? 48320,
-            peers = _gateway?.Peers ?? []
+            peers = _gateway?.Peers ?? [],
+            queuedRequests = _gateway?.QueuedRequests ?? []
         };
+    }
+
+    private async Task<BridgeResponse> HandlePluginImportAsync(BridgeMessage message)
+    {
+        if (_plugins is null || _services is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var paths = _services.GetRequiredService<OneDeskDataPaths>();
+        using var dialog = new OpenFileDialog
+        {
+            Title = "导入插件包",
+            Filter = "OneDesk Plugin Package (*.onedesk-plugin;*.zip)|*.onedesk-plugin;*.zip|All Files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "UserCancelled", "已取消插件导入");
+        }
+
+        try
+        {
+            var pluginRoot = Path.Combine(paths.Plugins, Path.GetFileNameWithoutExtension(dialog.FileName));
+            var temp = $"{pluginRoot}.tmp-{Guid.NewGuid():N}";
+            ZipFile.ExtractToDirectory(dialog.FileName, temp);
+            var manifestPath = Directory.EnumerateFiles(temp, "onedesk.plugin.json", SearchOption.AllDirectories).FirstOrDefault();
+            if (manifestPath is null)
+            {
+                Directory.Delete(temp, recursive: true);
+                return new BridgeResponse(message.RequestId, false, null, "PluginManifestMissing", "插件包缺少 onedesk.plugin.json");
+            }
+
+            var manifest = JsonSerializer.Deserialize<PluginManifest>(await File.ReadAllTextAsync(manifestPath), JsonOptions);
+            if (manifest is null)
+            {
+                Directory.Delete(temp, recursive: true);
+                return new BridgeResponse(message.RequestId, false, null, "InvalidPluginManifest", "插件清单格式不正确");
+            }
+
+            if (Directory.Exists(pluginRoot))
+            {
+                Directory.Delete(pluginRoot, recursive: true);
+            }
+
+            Directory.Move(temp, pluginRoot);
+            await _plugins.RegisterManifestAsync(manifest, pluginRoot);
+            return new BridgeResponse(message.RequestId, true, manifest);
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "PluginImportFailed", ex.Message);
+        }
     }
 
     private BridgeResponse HandlePairingGenerate(BridgeMessage message)
@@ -781,15 +918,30 @@ public sealed class MainForm : Form
             return ShellNotReady(message);
         }
 
-        var host = ReadPayloadString(message, "host");
+        var host = ReadPayloadString(message, "host") ?? GetLocalIpv4Addresses().FirstOrDefault() ?? "127.0.0.1";
         var port = ReadPayloadInt(message, "port", 48320);
         var code = _pairing.GenerateVerificationCode();
         return new BridgeResponse(message.RequestId, true, new
         {
             code,
             expiresInSeconds = 300,
+            host,
+            port,
+            localIps = GetLocalIpv4Addresses(),
             qrPayload = _pairing.CreateQrPayload(string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host, port, code)
         });
+    }
+
+    private static IReadOnlyList<string> GetLocalIpv4Addresses()
+    {
+        return NetworkInterface.GetAllNetworkInterfaces()
+            .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up && adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses)
+            .Where(address => address.Address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address.Address))
+            .Select(address => address.Address.ToString())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private BridgeResponse HandleWindowMinimize(BridgeMessage message)

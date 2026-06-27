@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Icon } from "@iconify/vue";
 import { computed, onMounted, ref } from "vue";
-import type { ComponentDefinition, PackageExportResult, PageDefinition, SchemeDefinition, SectionRoute, ThemeMode, ViewKey } from "./domain";
+import type { ComponentDefinition, PackageExportResult, PackageImportResult, PageDefinition, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, sendShell, setShellTheme, startWindowDrag } from "./nativeBridge";
 
@@ -19,7 +19,11 @@ const showDeviceDialog = ref(false);
 const exporting = ref(false);
 const exportProgress = ref(0);
 const isMaximized = ref(false);
-const pairing = ref<{ code: string; qrPayload: string; expiresInSeconds: number } | null>(null);
+const pairing = ref<{ code: string; qrPayload: string; expiresInSeconds: number; host?: string; port?: number; localIps?: string[] } | null>(null);
+const deviceRemarkDraft = ref<Record<string, string>>({});
+const componentCodeDraft = ref("");
+const pendingImportKind = ref<"Component" | "Page" | "Scheme" | null>(null);
+const pendingPluginImport = ref(false);
 
 const selectedComponent = computed(() => workspace.components.find((item) => item.id === workspace.selectedComponentId) ?? workspace.components[0]);
 const selectedPage = computed(() => workspace.pages.find((item) => item.id === workspace.selectedPageId) ?? workspace.pages[0]);
@@ -28,6 +32,12 @@ const viewTitle = computed(() => navItems.find((item) => item.key === activeView
 const permissionRows = computed(() => workspace.capabilities.flatMap((category) => category.capabilities));
 const permissionSourceKey = computed(() => selectedComponent.value ? `component:${selectedComponent.value.id}` : "component:unknown");
 const selectedGrants = computed(() => workspace.permissionGrants.find((grant) => grant.sourceKey === permissionSourceKey.value)?.capabilities ?? []);
+const trustedDevices = computed(() => workspace.deviceStatus?.trusted ?? []);
+const currentDevice = computed(() => trustedDevices.value[0] ?? null);
+const currentDeviceName = computed(() => currentDevice.value ? (currentDevice.value.remark || currentDevice.value.displayName) : "等待移动设备连接");
+const currentDeviceIcon = computed(() => currentDevice.value ? "solar:smartphone-bold-duotone" : "solar:devices-bold-duotone");
+const localPairingHost = computed(() => pairing.value?.host ?? workspace.deviceStatus?.localIps?.[0] ?? "127.0.0.1");
+const pagePreviewAspect = computed(() => currentDevice.value ? "aspect-[9/16]" : "aspect-[3/4]");
 
 onMounted(async () => {
   setTheme(theme.value);
@@ -59,13 +69,19 @@ async function toggleMaximize() {
 function handleWindowDrag(event: PointerEvent) {
   if (event.button !== 0 || isMaximized.value) return;
   const target = event.target instanceof Element ? event.target : null;
-  if (target?.closest("button,input,select,textarea,a,nav,.soft-card,.soft-row,.soft-start,.theme-dot,.window-controls,.no-drag,.device-menu")) return;
+  if (target?.closest("button,input,select,textarea,a,nav,.soft-card,.soft-row,.soft-start,.theme-dot,.window-controls,.no-drag,.device-menu,[data-no-window-drag]")) return;
+  const scroller = target?.closest(".scrollable");
+  if (scroller) {
+    const rect = scroller.getBoundingClientRect();
+    if (event.clientX >= rect.right - 16 || event.clientY >= rect.bottom - 16) return;
+  }
   void startWindowDrag();
 }
 
 function chooseComponent(component: ComponentDefinition) {
   workspace.selectedComponentId = component.id;
   componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
+  componentCodeDraft.value = generatedComponentCode(component);
   componentRoute.value = "editor";
 }
 
@@ -118,6 +134,10 @@ async function createComponent() {
   const response = await sendShell<ComponentDefinition>("workspace.saveComponent", component);
   workspace.toast = response.ok ? "组件已创建" : response.message ?? "组件创建失败";
   await loadWorkspace();
+  workspace.selectedComponentId = id;
+  componentEditorMode.value = "visual";
+  componentCodeDraft.value = generatedComponentCode(component);
+  componentRoute.value = "editor";
 }
 
 async function createPage() {
@@ -143,6 +163,8 @@ async function createPage() {
   const response = await sendShell<PageDefinition>("workspace.savePage", page);
   workspace.toast = response.ok ? "页面已创建" : response.message ?? "页面创建失败";
   await loadWorkspace();
+  workspace.selectedPageId = id;
+  pageRoute.value = "editor";
 }
 
 async function createScheme() {
@@ -162,6 +184,8 @@ async function createScheme() {
   const response = await sendShell<SchemeDefinition>("workspace.saveScheme", scheme);
   workspace.toast = response.ok ? "方案已创建" : response.message ?? "方案创建失败";
   await loadWorkspace();
+  workspace.selectedSchemeId = id;
+  schemeRoute.value = "editor";
 }
 
 function startProgress(label = "操作完成") {
@@ -213,11 +237,79 @@ async function togglePermission(capability: string) {
   await loadWorkspace();
 }
 
+async function saveComponent() {
+  if (!selectedComponent.value) return;
+  if (componentEditorMode.value === "code") {
+    selectedComponent.value.editMode = "code";
+    selectedComponent.value.visualConfigFile = null;
+  }
+  const response = await sendShell<ComponentDefinition>("workspace.saveComponent", selectedComponent.value);
+  workspace.toast = response.ok ? "组件已保存" : response.message ?? "组件保存失败";
+  await loadWorkspace();
+}
+
+function generatedComponentCode(component?: ComponentDefinition) {
+  const name = component?.name ?? "新组件";
+  return `<script setup lang="ts">\nconst title = '${name}'\n<\/script>\n\n<template>\n  <button class="onedesk-control-tile">{{ title }}</button>\n</template>\n\n<style scoped>\n.onedesk-control-tile {\n  width: 100%;\n  height: 100%;\n  border-radius: 16px;\n  overflow: hidden;\n  background: linear-gradient(135deg, #0ea5e9, #22d3ee);\n  color: white;\n  font-size: 14px;\n  font-weight: 700;\n}\n</style>`;
+}
+
+async function savePage() {
+  if (!selectedPage.value) return;
+  const response = await sendShell<PageDefinition>("workspace.savePage", selectedPage.value);
+  workspace.toast = response.ok ? "页面已保存" : response.message ?? "页面保存失败";
+  await loadWorkspace();
+}
+
+async function saveScheme() {
+  if (!selectedScheme.value) return;
+  const response = await sendShell<SchemeDefinition>("workspace.saveScheme", selectedScheme.value);
+  workspace.toast = response.ok ? "方案已保存" : response.message ?? "方案保存失败";
+  await loadWorkspace();
+}
+
+async function importWorkspace(kind: "Component" | "Page" | "Scheme") {
+  pendingImportKind.value = kind;
+  showPermissionDialog.value = true;
+}
+
+async function confirmPermissionDialog() {
+  if (pendingPluginImport.value) {
+    pendingPluginImport.value = false;
+    showPermissionDialog.value = false;
+    const response = await sendShell("plugin.import");
+    workspace.toast = response.ok ? "插件已导入并注册" : response.message ?? "插件导入失败";
+    await loadWorkspace();
+    return;
+  }
+  if (!pendingImportKind.value) {
+    showPermissionDialog.value = false;
+    return;
+  }
+  const kind = pendingImportKind.value;
+  pendingImportKind.value = null;
+  showPermissionDialog.value = false;
+  const response = await sendShell<PackageImportResult>(`workspace.import${kind}`);
+  workspace.toast = response.ok ? "导入完成，权限与依赖已进入校验流程" : response.message ?? "导入失败";
+  await loadWorkspace();
+}
+
+async function renameDevice(device: TrustedPairingCredential) {
+  const response = await sendShell<TrustedPairingCredential>("device.rename", { deviceId: device.deviceId, remark: deviceRemarkDraft.value[device.deviceId] ?? "" });
+  workspace.toast = response.ok ? "设备备注已保存" : response.message ?? "设备备注保存失败";
+  await loadWorkspace();
+}
+
+async function importPlugin() {
+  pendingImportKind.value = null;
+  pendingPluginImport.value = true;
+  showPermissionDialog.value = true;
+}
+
 async function openDeviceDialog(generateCode = false) {
   showDeviceMenu.value = false;
   showDeviceDialog.value = true;
   if (!pairing.value || generateCode) {
-    const response = await sendShell<{ code: string; qrPayload: string; expiresInSeconds: number }>("pairing.generate", { host: "127.0.0.1", port: 48320 });
+    const response = await sendShell<{ code: string; qrPayload: string; expiresInSeconds: number; host?: string; port?: number; localIps?: string[] }>("pairing.generate", { port: 48320 });
     if (response.ok && response.payload) pairing.value = response.payload;
   }
 }
@@ -238,9 +330,9 @@ function previewGradient(seed: string) {
 
 <template>
   <main class="h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100" @pointerdown="handleWindowDrag">
-    <section class="app-shell flex h-full min-h-[720px] min-w-[1120px] overflow-hidden bg-white/60 backdrop-blur-2xl dark:bg-black/60">
+    <section class="app-shell flex h-full min-h-[720px] min-w-[1120px] overflow-hidden bg-white/72 backdrop-blur-2xl dark:bg-black/72">
       <aside class="flex w-[96px] shrink-0 items-start justify-center py-9">
-        <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950">
+        <nav class="side-nav flex w-[54px] flex-col items-center gap-4 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950">
           <button v-for="item in navItems" :key="item.key" class="grid size-10 place-items-center rounded-full transition" :class="activeView === item.key ? 'bg-sky-500 text-white shadow-[0_10px_24px_rgba(14,165,233,0.35)]' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'" :title="item.label" @click="openView(item.key)">
             <Icon :icon="navIcon(item)" class="size-[21px]" />
           </button>
@@ -256,14 +348,15 @@ function previewGradient(seed: string) {
 
           <div class="flex min-w-0 flex-1 items-center justify-end gap-3">
             <div class="device-menu relative">
-              <button class="grid size-8 place-items-center rounded-full text-slate-500 hover:bg-white hover:text-sky-500 dark:text-slate-300 dark:hover:bg-slate-950" title="设备" @click="showDeviceMenu = !showDeviceMenu">
-                <Icon icon="solar:monitor-bold-duotone" class="size-4" />
+              <button class="flex h-9 max-w-[220px] items-center gap-2 rounded-full bg-white px-3 text-[12px] font-medium text-slate-600 shadow-sm hover:text-sky-500 dark:bg-slate-950 dark:text-slate-300" title="设备" @click="showDeviceMenu = !showDeviceMenu">
+                <Icon :icon="currentDeviceIcon" class="size-4 text-sky-500" />
+                <span class="truncate">{{ currentDeviceName }}</span>
               </button>
-              <div v-if="showDeviceMenu" class="absolute right-0 top-10 z-30 w-[220px] rounded-[22px] bg-white p-2 shadow-2xl shadow-slate-950/12 dark:bg-slate-950">
-                <button class="menu-row" @click="openDeviceDialog(true)"><Icon icon="solar:add-circle-bold-duotone" class="size-5 text-sky-500" />添加设备</button>
-                <button class="menu-row" @click="openDeviceDialog(false)"><Icon icon="solar:devices-bold-duotone" class="size-5 text-sky-500" />设备管理</button>
+              <div v-if="showDeviceMenu" class="absolute right-0 top-11 z-30 w-[260px] rounded-[22px] bg-white p-2 shadow-2xl shadow-slate-950/12 dark:bg-slate-950">
+                <button class="menu-row" @click="openDeviceDialog(true)"><Icon icon="solar:qr-code-bold-duotone" class="size-5 text-sky-500" />显示连接码</button>
+                <button class="menu-row" @click="openDeviceDialog(false)"><Icon icon="solar:devices-bold-duotone" class="size-5 text-sky-500" />设备管理与备注</button>
                 <div class="my-1 h-px bg-slate-100 dark:bg-slate-800"></div>
-                <p class="px-3 py-2 text-[11px] leading-5 text-slate-500">移动端通过 IP、端口和 6 位验证码建立首次信任。</p>
+                <p class="px-3 py-2 text-[11px] leading-5 text-slate-500">桌面端显示本机局域网 IP 和验证码，由手机端主动连接。</p>
               </div>
             </div>
 
@@ -290,15 +383,15 @@ function previewGradient(seed: string) {
           <section v-if="activeView === 'home'" class="grid h-full grid-cols-[1.25fr_0.9fr] grid-rows-[240px_1fr] gap-5">
             <div class="soft-card p-5">
               <div class="mb-4 flex items-start justify-between">
-                <div><h2 class="text-[16px] font-semibold">设备状态</h2><p class="mt-2 text-[12px] text-slate-500 dark:text-slate-400">已发现 {{ workspace.devices.length || 1 }} 个设备</p></div>
-                <span class="flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400"><i class="size-2 rounded-full bg-green-500"></i>在线</span>
+                <div><h2 class="text-[16px] font-semibold">移动设备</h2><p class="mt-2 text-[12px] text-slate-500 dark:text-slate-400">已信任 {{ trustedDevices.length }} 个移动设备</p></div>
+                <span class="flex items-center gap-1.5 text-[12px] text-slate-500 dark:text-slate-400"><i class="size-2 rounded-full" :class="currentDevice ? 'bg-green-500' : 'bg-slate-400'"></i>{{ currentDevice ? '可用' : '等待连接' }}</span>
               </div>
               <div class="flex items-center gap-5">
                 <div class="grid size-[68px] shrink-0 grid-cols-3 gap-1 rounded-xl bg-slate-900 p-2 shadow-lg shadow-slate-950/12 dark:bg-slate-800"><span v-for="index in 9" :key="index" class="rounded-[3px] bg-slate-600"></span></div>
                 <div class="min-w-0 flex-1">
-                  <p class="truncate text-[14px] font-semibold">{{ workspace.selectedDevice }}</p>
-                  <p class="mt-2 text-[12px] text-slate-500 dark:text-slate-400">{{ workspace.components.length }} 组件 · {{ workspace.pages.length }} 页面 · {{ workspace.schemes.length }} 方案</p>
-                  <p class="mt-1 flex items-center gap-1 text-[12px] text-green-600"><Icon icon="solar:verified-check-bold-duotone" class="size-4" />工作区已校验</p>
+                  <p class="truncate text-[14px] font-semibold">{{ currentDeviceName }}</p>
+                  <p class="mt-2 text-[12px] text-slate-500 dark:text-slate-400">{{ currentDevice ? '移动端页面预览将使用该设备比例' : '手机端输入本机 IP 和验证码后会出现在这里' }}</p>
+                  <p class="mt-1 flex items-center gap-1 text-[12px]" :class="currentDevice ? 'text-green-600' : 'text-sky-600'"><Icon icon="solar:verified-check-bold-duotone" class="size-4" />{{ currentDevice ? '长期信任已建立' : `本机 IP ${localPairingHost}` }}</p>
                 </div>
               </div>
               <div class="mt-5 flex justify-end"><button class="rounded-full border border-sky-500/60 px-4 py-2 text-[12px] font-medium text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40" @click="openDeviceDialog(false)">设备管理</button></div>
@@ -307,7 +400,7 @@ function previewGradient(seed: string) {
             <div class="soft-card p-5">
               <h2 class="text-[16px] font-semibold">快捷操作</h2>
               <div class="mt-4 grid gap-3">
-                <button v-for="item in quickActions" :key="item.label" class="soft-row group" @click="item.label.includes('创建') ? createScheme() : startProgress(item.label.includes('导入') ? '导入入口已准备' : '动作编辑器已打开')">
+                <button v-for="item in quickActions" :key="item.label" class="soft-row group" @click="item.label.includes('创建') ? createScheme() : item.label.includes('导入') ? importWorkspace('Scheme') : startProgress('动作编辑器已打开')">
                   <span class="grid size-8 place-items-center rounded-xl bg-white shadow-sm dark:bg-slate-800"><Icon :icon="item.icon" :class="['size-5', item.color]" /></span>
                   <span class="min-w-0 flex-1 truncate text-left text-[13px] font-medium">{{ item.label }}</span>
                   <Icon icon="solar:alt-arrow-right-linear" class="size-4 text-slate-400 transition group-hover:translate-x-0.5" />
@@ -326,8 +419,8 @@ function previewGradient(seed: string) {
             </div>
           </section>
 
-          <section v-else-if="activeView === 'component' && componentRoute === 'manager'" class="h-full overflow-auto">
-            <div class="mb-4 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">组件管理</h2><p class="mt-1 text-[12px] text-slate-500">组件以卡片管理，预览使用上一次保存时的截图状态。</p></div><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="createComponent">新建组件</button></div>
+          <section v-else-if="activeView === 'component' && componentRoute === 'manager'" class="scrollable h-full overflow-auto" data-no-window-drag>
+            <div class="mb-4 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">组件管理</h2><p class="mt-1 text-[12px] text-slate-500">组件以卡片管理，预览使用上一次保存时的截图状态。</p></div><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="importWorkspace('Component')">导入组件</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="createComponent">新建组件</button></div></div>
             <div class="grid grid-cols-3 gap-4">
               <article v-for="item in workspace.components" :key="item.id" class="manager-card">
                 <div :class="['manager-preview bg-gradient-to-br', previewGradient(item.id)]"><Icon icon="solar:bolt-circle-bold-duotone" class="size-8 text-white" /><span class="mt-2 text-[12px] font-semibold text-white">{{ item.name }}</span></div>
@@ -350,45 +443,39 @@ function previewGradient(seed: string) {
               </template>
             </aside>
             <section class="soft-card min-w-0 p-4">
-              <div class="mb-4 flex items-center justify-between"><div class="flex rounded-full bg-white p-1 text-[12px] shadow-sm dark:bg-slate-900"><button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'visual' ? 'bg-sky-500 text-white' : ''" @click="componentEditorMode = 'visual'">可视化</button><button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'code' ? 'bg-sky-500 text-white' : ''" @click="requestCodeMode">代码</button></div><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="exportComponent(selectedComponent)">导出组件</button></div>
+              <div class="mb-4 flex items-center justify-between gap-3"><div class="flex rounded-full bg-white p-1 text-[12px] shadow-sm dark:bg-slate-900"><button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'visual' ? 'bg-sky-500 text-white' : ''" @click="componentEditorMode = 'visual'">可视化</button><button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'code' ? 'bg-sky-500 text-white' : ''" @click="requestCodeMode">代码</button></div><input v-if="selectedComponent" v-model="selectedComponent.name" class="field min-w-0 flex-1" placeholder="组件名称" /><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportComponent(selectedComponent)">导出组件</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="saveComponent">保存</button></div></div>
               <div v-if="componentEditorMode === 'visual'" class="grid gap-3">
-                <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">样式配置</h3><div class="mt-3 grid grid-cols-4 gap-2 text-[12px]"><select class="field"><option>渐变背景</option><option>纯色背景</option><option>图片背景</option><option>视频背景</option></select><input class="field" value="圆角 16" /><input class="field" value="边距 8" /><select class="field"><option>居中</option><option>靠左</option><option>靠右</option><option>靠下</option></select><input class="field" value="启动场景" /><input class="field" value="字号 14" /><input class="field" value="#0ea5e9" /><select class="field"><option>按下缩小</option><option>按下高亮</option></select></div></div>
+                <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">样式配置</h3><div class="mt-3 grid grid-cols-4 gap-2 text-[12px]"><select class="field"><option>渐变背景</option><option>纯色背景</option><option>图片背景</option><option>视频背景</option></select><input class="field" value="圆角 16" /><input class="field" value="边距 8" /><select class="field"><option>居中</option><option>靠左</option><option>靠右</option><option>靠下</option></select><input v-if="selectedComponent" v-model="selectedComponent.name" class="field" placeholder="显示文字" /><input class="field" value="字号 14" /><input class="field" value="#0ea5e9" /><select class="field"><option>按下缩小</option><option>按下高亮</option></select></div><p class="mt-3 text-[11px] text-slate-500">保存时会保留可视化配置文件标记，切换代码编辑后将不可回退。</p></div>
                 <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><div class="mb-3 flex items-center justify-between"><h3 class="text-[13px] font-semibold">动作配置</h3><button class="text-[12px] text-sky-600">添加动作</button></div><div class="grid gap-2 text-[12px]"><div v-for="actionId in selectedComponent?.actionIds" :key="actionId" class="grid grid-cols-[120px_1fr_80px] rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><span>{{ workspace.actions.find((action) => action.id === actionId)?.trigger.displayName ?? '未设置' }}</span><span>{{ workspace.actions.find((action) => action.id === actionId)?.name ?? actionId }}</span><span class="text-right text-green-600">已授权</span></div></div></div>
               </div>
-              <pre v-else class="h-[430px] overflow-auto rounded-[18px] bg-slate-950 p-4 text-[12px] leading-6 text-sky-100"><code>&lt;script setup lang="ts"&gt;
-const title = '{{ selectedComponent?.name }}'
-&lt;/script&gt;
-
-&lt;template&gt;
-  &lt;button class="control-tile"&gt;&#123;&#123; title &#125;&#125;&lt;/button&gt;
-&lt;/template&gt;</code></pre>
+              <textarea v-else v-model="componentCodeDraft" class="scrollable h-[430px] w-full resize-none overflow-auto rounded-[18px] bg-slate-950 p-4 font-mono text-[12px] leading-6 text-sky-100 outline-none" data-no-window-drag spellcheck="false"></textarea>
             </section>
             <aside class="soft-card p-4"><div class="flex items-center justify-between"><h3 class="text-[13px] font-semibold">实时预览</h3><select v-model="previewRatio" class="field w-[82px]"><option>1:1</option><option>2:3</option><option>4:6</option></select></div><div class="mt-4 grid overflow-hidden rounded-[22px] bg-gradient-to-br from-sky-400 to-cyan-300 text-white shadow-lg shadow-sky-500/18" :class="previewRatio === '1:1' ? 'aspect-square' : previewRatio === '2:3' ? 'aspect-[2/3]' : 'aspect-[4/6]'"><div class="grid place-items-center text-center"><div><Icon icon="solar:bolt-circle-bold-duotone" class="mx-auto size-10" /><p class="mt-2 text-[13px] font-semibold">{{ selectedComponent?.name }}</p></div></div></div><div class="mt-4 grid gap-2 text-[12px] text-slate-500"><p>预览比例：{{ previewRatio }}</p><p>溢出策略：隐藏</p><p>权限：{{ selectedComponent?.requestedPermissions.length }} 项</p></div></aside>
           </section>
 
-          <section v-else-if="activeView === 'page' && pageRoute === 'manager'" class="h-full overflow-auto">
-            <div class="mb-4 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">页面管理</h2><p class="mt-1 text-[12px] text-slate-500">页面以卡片管理，预览为上次保存的格子矩阵状态。</p></div><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="createPage">新建页面</button></div>
+          <section v-else-if="activeView === 'page' && pageRoute === 'manager'" class="scrollable h-full overflow-auto" data-no-window-drag>
+            <div class="mb-4 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">页面管理</h2><p class="mt-1 text-[12px] text-slate-500">页面以卡片管理，预览为上次保存的格子矩阵状态。</p></div><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="importWorkspace('Page')">导入页面</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="createPage">新建页面</button></div></div>
             <div class="grid grid-cols-3 gap-4"><article v-for="page in workspace.pages" :key="page.id" class="manager-card"><div class="manager-preview bg-slate-100 dark:bg-slate-800"><div class="grid h-full w-full gap-1 rounded-2xl p-2" :style="{ gridTemplateColumns: `repeat(${page.columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${page.rows}, minmax(0, 1fr))` }"><span v-for="cell in page.cells.slice(0, 12)" :key="cell.id" class="rounded-md bg-white dark:bg-slate-950" :class="cell.componentId ? 'ring-1 ring-sky-400' : ''"></span></div></div><p class="mt-3 text-[14px] font-semibold">{{ page.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ page.rows }} x {{ page.columns }} · {{ pageComponentCount(page) }} 组件 · {{ page.backgroundKind }}</p><div class="mt-4 grid grid-cols-2 gap-2"><button class="card-action" @click="choosePage(page)"><Icon icon="solar:pen-bold-duotone" class="size-4" />修改</button><button class="card-action danger" @click="deletePage(page)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-4" />删除</button></div></article></div>
           </section>
 
           <section v-else-if="activeView === 'page'" class="soft-card h-full p-5">
-            <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="pageRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回页面管理</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="exportPage(selectedPage)">导出页面</button></div>
-            <div class="grid h-[calc(100%-32px)] grid-cols-[260px_1fr] gap-5"><aside class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><h2 class="text-[16px] font-semibold">{{ selectedPage?.name }}</h2><div class="mt-4 grid gap-2 text-[12px]"><input class="field" :value="`${selectedPage?.rows ?? 0} 行`" /><input class="field" :value="`${selectedPage?.columns ?? 0} 列`" /><input class="field" :value="`行间距 ${selectedPage?.spacing.rowGap ?? 0}`" /><input class="field" :value="`列间距 ${selectedPage?.spacing.columnGap ?? 0}`" /><select class="field"><option>{{ selectedPage?.backgroundKind }}</option><option>图片背景</option><option>视频背景</option></select></div></aside><div class="grid place-items-center rounded-[22px] bg-white p-6 shadow-sm dark:bg-slate-900"><div class="grid aspect-[4/3] w-full max-w-[520px] gap-2 overflow-hidden rounded-[20px] bg-slate-100 p-3 dark:bg-slate-800" :style="{ gridTemplateColumns: `repeat(${selectedPage?.columns ?? 3}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${selectedPage?.rows ?? 3}, minmax(0, 1fr))` }"><div v-for="cell in selectedPage?.cells" :key="cell.id" class="overflow-hidden rounded-xl border border-slate-200 bg-white text-[10px] text-slate-500 dark:border-slate-700 dark:bg-slate-900" :style="{ gridColumn: `span ${cell.columnSpan} / span ${cell.columnSpan}`, gridRow: `span ${cell.rowSpan} / span ${cell.rowSpan}` }"><span v-if="cell.componentId" class="grid h-full place-items-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span></div></div></div></div>
+            <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="pageRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回页面管理</button><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportPage(selectedPage)">导出页面</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="savePage">保存页面</button></div></div>
+            <div class="grid h-[calc(100%-32px)] grid-cols-[260px_1fr] gap-5"><aside class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><input v-if="selectedPage" v-model="selectedPage.name" class="field w-full text-[15px] font-semibold" placeholder="页面名称" /><div class="mt-4 grid gap-2 text-[12px]"><input v-if="selectedPage" v-model.number="selectedPage.rows" type="number" min="1" max="12" class="field" placeholder="行数" /><input v-if="selectedPage" v-model.number="selectedPage.columns" type="number" min="1" max="12" class="field" placeholder="列数" /><input v-if="selectedPage" v-model.number="selectedPage.spacing.rowGap" type="number" class="field" placeholder="行间距" /><input v-if="selectedPage" v-model.number="selectedPage.spacing.columnGap" type="number" class="field" placeholder="列间距" /><select v-if="selectedPage" v-model="selectedPage.backgroundKind" class="field"><option value="solid">纯色背景</option><option value="gradient">渐变背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></div><p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p></aside><div class="grid place-items-center rounded-[22px] bg-white p-6 shadow-sm dark:bg-slate-900"><div class="grid w-full max-w-[420px] gap-2 overflow-hidden rounded-[24px] bg-slate-100 p-3 dark:bg-slate-800" :class="pagePreviewAspect" :style="{ gridTemplateColumns: `repeat(${selectedPage?.columns ?? 3}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${selectedPage?.rows ?? 3}, minmax(0, 1fr))` }"><div v-for="cell in selectedPage?.cells" :key="cell.id" class="overflow-hidden rounded-xl border border-slate-200 bg-white text-[10px] text-slate-500 dark:border-slate-700 dark:bg-slate-900" :style="{ gridColumn: `span ${cell.columnSpan} / span ${cell.columnSpan}`, gridRow: `span ${cell.rowSpan} / span ${cell.rowSpan}` }"><span v-if="cell.componentId" class="grid h-full place-items-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span></div></div></div></div>
           </section>
 
-          <section v-else-if="activeView === 'scheme' && schemeRoute === 'manager'" class="h-full overflow-auto">
-            <div class="mb-4 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">方案管理</h2><p class="mt-1 text-[12px] text-slate-500">方案是最终应用到移动端的唯一成品。</p></div><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="createScheme">新建方案</button></div>
+          <section v-else-if="activeView === 'scheme' && schemeRoute === 'manager'" class="scrollable h-full overflow-auto" data-no-window-drag>
+            <div class="mb-4 flex items-center justify-between"><div><h2 class="text-[16px] font-semibold">方案管理</h2><p class="mt-1 text-[12px] text-slate-500">方案是最终应用到移动端的唯一成品。</p></div><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="importWorkspace('Scheme')">导入方案</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="createScheme">新建方案</button></div></div>
             <div class="grid grid-cols-3 gap-4"><article v-for="scheme in workspace.schemes" :key="scheme.id" class="manager-card"><div :class="['manager-preview bg-gradient-to-br', previewGradient(scheme.id)]"><Icon icon="solar:play-circle-bold-duotone" class="size-9 text-white" /><span class="mt-2 text-[12px] font-semibold text-white">{{ scheme.name }}</span></div><p class="mt-3 text-[14px] font-semibold">{{ scheme.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ scheme.pageIds.length }} 页面 · {{ scheme.pluginDependencies.length }} 插件依赖</p><p class="mt-2 text-[12px]" :class="workspace.activeSchemeId === scheme.id ? 'text-sky-600' : 'text-slate-500'">{{ workspace.activeSchemeId === scheme.id ? '已应用' : '未应用' }}</p><div class="mt-4 grid grid-cols-2 gap-2"><button class="card-action" @click="chooseScheme(scheme)"><Icon icon="solar:pen-bold-duotone" class="size-4" />修改</button><button class="card-action danger" @click="deleteScheme(scheme)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-4" />删除</button></div></article></div>
           </section>
 
           <section v-else-if="activeView === 'scheme'" class="soft-card h-full p-5">
-            <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="schemeRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回方案管理</button><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportScheme(selectedScheme)">导出方案</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="selectedScheme && applyScheme(selectedScheme.id)">应用方案</button></div></div>
-            <div class="grid h-[calc(100%-42px)] grid-cols-[230px_1fr] gap-5"><aside class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><h2 class="text-[16px] font-semibold">{{ selectedScheme?.name }}</h2><div class="mt-4 grid gap-2 text-[12px]"><button v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 text-left dark:bg-slate-800">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</button></div></aside><div class="rounded-[22px] bg-white p-5 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">页面流程</h3><div class="mt-5 grid grid-cols-4 gap-4"><div v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700"><Icon icon="solar:smartphone-bold-duotone" class="mx-auto size-8 text-sky-500" /><p class="mt-2 text-[13px] font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</p></div></div><div class="mt-5 grid gap-2 text-[12px] text-slate-500"><p>全局上一页：{{ selectedScheme?.globalPrevious.trigger.displayName }} / {{ selectedScheme?.globalPrevious.animation }}</p><p>全局下一页：{{ selectedScheme?.globalNext.trigger.displayName }} / {{ selectedScheme?.globalNext.animation }}</p><p v-for="edge in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}`">{{ edge.fromPageId }} -> {{ edge.toPageId }}：{{ edge.trigger.displayName }} / {{ edge.animation }}</p></div></div></div>
+            <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="schemeRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回方案管理</button><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportScheme(selectedScheme)">导出方案</button><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="saveScheme">保存方案</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="selectedScheme && applyScheme(selectedScheme.id)">应用方案</button></div></div>
+            <div class="grid h-[calc(100%-42px)] grid-cols-[230px_1fr] gap-5"><aside class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><input v-if="selectedScheme" v-model="selectedScheme.name" class="field w-full text-[15px] font-semibold" placeholder="方案名称" /><div class="mt-4 grid gap-2 text-[12px]"><button v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 text-left dark:bg-slate-800">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</button></div></aside><div class="rounded-[22px] bg-white p-5 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">页面流程</h3><div class="mt-5 flex items-center gap-3 overflow-auto pb-2"><template v-for="(pageId, index) in selectedScheme?.pageIds" :key="pageId"><div class="min-w-[132px] rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700"><Icon icon="solar:smartphone-bold-duotone" class="mx-auto size-8 text-sky-500" /><p class="mt-2 text-[13px] font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</p></div><div v-if="index < (selectedScheme?.pageIds.length ?? 0) - 1" class="min-w-[96px] text-center text-[11px] text-slate-500"><Icon icon="solar:alt-arrow-right-linear" class="mx-auto size-5" /><p>{{ selectedScheme?.globalNext.trigger.displayName }}</p><p>{{ selectedScheme?.globalNext.animation }}</p></div></template></div><div class="mt-5 grid gap-2 text-[12px] text-slate-500"><p>全局上一页：{{ selectedScheme?.globalPrevious.trigger.displayName }} / {{ selectedScheme?.globalPrevious.animation }}</p><p>全局下一页：{{ selectedScheme?.globalNext.trigger.displayName }} / {{ selectedScheme?.globalNext.animation }}</p><p v-for="edge in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}`">{{ edge.fromPageId }} -> {{ edge.toPageId }}：{{ edge.trigger.displayName }} / {{ edge.animation }}</p></div></div></div>
           </section>
 
-          <section v-else class="soft-card h-full overflow-auto p-5">
-            <div class="mb-4 flex items-center justify-between"><h2 class="text-[16px] font-semibold">{{ viewTitle }}</h2><button class="rounded-full bg-sky-500 px-3 py-1.5 text-[12px] font-medium text-white" @click="startProgress('操作完成')">执行操作</button></div>
-            <div v-if="activeView === 'plugin'" class="grid grid-cols-2 gap-3"><div class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900"><p class="font-semibold">OBS Control</p><p class="mt-1 text-[12px] text-slate-500">后端插件 · JSON-RPC · 按需调用</p></div><div class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900"><p class="font-semibold">系统助手</p><p class="mt-1 text-[12px] text-slate-500">后端插件 · 常驻需授权</p></div></div>
+          <section v-else class="soft-card scrollable h-full overflow-auto p-5" data-no-window-drag>
+            <div class="mb-4 flex items-center justify-between"><h2 class="text-[16px] font-semibold">{{ viewTitle }}</h2><button class="rounded-full bg-sky-500 px-3 py-1.5 text-[12px] font-medium text-white" @click="activeView === 'plugin' ? importPlugin() : startProgress('操作完成')">{{ activeView === 'plugin' ? '导入插件' : '执行操作' }}</button></div>
+            <div v-if="activeView === 'plugin'" class="grid grid-cols-2 gap-3"><div v-for="plugin in workspace.plugins" :key="plugin.id" class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="truncate font-semibold">{{ plugin.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ plugin.id }} · {{ plugin.version }}</p></div><span class="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-600 dark:bg-sky-950">已注册</span></div><p class="mt-2 text-[12px] text-slate-500">{{ plugin.persistent ? '允许常驻后台' : '按需调用' }} · {{ plugin.permissions.length }} 权限</p></div><div v-if="!workspace.plugins.length" class="col-span-2 rounded-2xl bg-white px-4 py-8 text-center text-[13px] text-slate-500 shadow-sm dark:bg-slate-900">暂无插件。导入插件包后，OneDesk 会读取插件清单、显示权限并注册后端进程。</div></div>
             <div v-else class="grid gap-2"><div class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900"><p class="font-semibold">授权对象：{{ selectedComponent?.name ?? '未选择组件' }}</p><p class="mt-1 text-[12px] text-slate-500">{{ permissionSourceKey }} · 大类授权会覆盖全部小类，小类授权只开放单项能力。</p></div><div v-for="item in permissionRows" :key="item.id" class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900"><div class="flex items-center justify-between gap-4"><div class="min-w-0"><p class="truncate font-semibold">{{ item.name }}</p><p class="mt-1 truncate text-[12px] text-slate-500">{{ item.categoryName }} · {{ item.id }}</p></div><div class="flex items-center gap-2"><span :class="item.highRisk ? 'text-rose-500' : 'text-sky-600'">{{ item.highRisk ? '高危' : '普通' }}</span><button class="rounded-full px-3 py-1.5 text-[12px] font-medium" :class="selectedGrants.includes(item.id) ? 'bg-sky-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'" @click="togglePermission(item.id)">{{ selectedGrants.includes(item.id) ? '已授权' : '授权' }}</button></div></div></div></div>
           </section>
         </div>
@@ -399,20 +486,20 @@ const title = '{{ selectedComponent?.name }}'
 
     <div v-if="showDeviceDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
       <div class="w-full max-w-[760px] rounded-[30px] bg-white p-5 shadow-2xl dark:bg-slate-950">
-        <div class="flex items-center justify-between"><div><h3 class="text-[17px] font-semibold">设备管理</h3><p class="mt-1 text-[12px] text-slate-500">桌面端作为网关，可同时连接多个移动端；移动端首次连接需验证码或二维码。</p></div><button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showDeviceDialog = false"><Icon icon="solar:close-circle-bold-duotone" class="size-5" /></button></div>
+        <div class="flex items-center justify-between"><div><h3 class="text-[17px] font-semibold">设备管理</h3><p class="mt-1 text-[12px] text-slate-500">手机端输入本机局域网 IP、端口和验证码后连接桌面端。</p></div><button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showDeviceDialog = false"><Icon icon="solar:close-circle-bold-duotone" class="size-5" /></button></div>
         <div class="mt-5 grid grid-cols-[1fr_300px] gap-4">
-          <section class="rounded-[22px] bg-slate-50 p-4 dark:bg-slate-900"><h4 class="text-[13px] font-semibold">当前桌面端</h4><div class="mt-3 rounded-2xl bg-white p-4 dark:bg-slate-950"><p class="text-[14px] font-semibold">{{ workspace.deviceStatus?.desktop?.displayName ?? workspace.selectedDevice }}</p><p class="mt-1 text-[12px] text-slate-500">{{ workspace.components.length }} 组件 · {{ workspace.pages.length }} 页面 · {{ workspace.schemes.length }} 方案</p><p class="mt-2 text-[12px]" :class="workspace.gatewayStatus?.running ? 'text-green-600' : 'text-rose-500'">{{ workspace.gatewayStatus?.running ? '网关运行中' : '网关未启动' }} · QUIC 端口 {{ workspace.gatewayStatus?.port ?? 48320 }}</p><p v-if="workspace.cacheManifest" class="mt-2 break-all text-[11px] text-slate-500">当前缓存：{{ workspace.cacheManifest.pageCount }} 页面 · {{ workspace.cacheManifest.componentCount }} 组件 · {{ workspace.cacheManifest.hash.slice(0, 16) }}</p></div><h4 class="mt-4 text-[13px] font-semibold">已连接设备</h4><div class="mt-3 grid gap-2"><div v-for="peer in workspace.gatewayStatus?.peers" :key="peer.deviceId" class="rounded-2xl bg-white p-3 text-[12px] dark:bg-slate-950"><div class="flex items-center justify-between"><span class="font-semibold">{{ peer.deviceId }}</span><span :class="peer.online ? 'text-green-600' : 'text-slate-400'">{{ peer.online ? '在线' : '离线' }}</span></div><p class="mt-1 text-slate-500">{{ peer.endpoint }} · {{ new Date(peer.lastSeenAt).toLocaleString() }}</p></div><div v-if="!workspace.gatewayStatus?.peers.length" class="rounded-2xl bg-white p-3 text-[12px] text-slate-500 dark:bg-slate-950">暂无移动端连接</div></div><h4 class="mt-4 text-[13px] font-semibold">已信任设备</h4><div class="mt-3 grid gap-2"><div v-for="device in workspace.deviceStatus?.trusted" :key="device.deviceId" class="rounded-2xl bg-white p-3 text-[12px] dark:bg-slate-950"><div class="flex items-center justify-between"><span class="font-semibold">{{ device.displayName }}</span><span class="text-green-600">已信任</span></div><p class="mt-1 text-slate-500">{{ device.deviceId }} · {{ new Date(device.createdAt).toLocaleString() }}</p></div><div v-if="!workspace.deviceStatus?.trusted.length" class="rounded-2xl bg-white p-3 text-[12px] text-slate-500 dark:bg-slate-950">暂无长期信任设备</div></div></section>
-          <section class="rounded-[22px] bg-slate-50 p-4 dark:bg-slate-900"><h4 class="text-[13px] font-semibold">添加移动设备</h4><div class="mt-3 grid gap-2 text-[12px]"><input class="field" value="127.0.0.1" /><input class="field" value="48320" /><div class="rounded-2xl bg-white p-4 text-center dark:bg-slate-950"><p class="text-[28px] font-semibold tracking-[0.3em] text-sky-500">{{ pairing?.code ?? "------" }}</p><p class="mt-1 text-[11px] text-slate-500">验证码 5 分钟内有效，成功连接后换取长期信任凭据</p></div><div class="rounded-2xl bg-white p-3 dark:bg-slate-950"><p class="text-[12px] font-semibold">二维码内容</p><p class="mt-2 break-all text-[11px] leading-5 text-slate-500">{{ pairing?.qrPayload ?? "点击生成验证码后显示" }}</p></div><button class="rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="openDeviceDialog(true)">生成新的验证码</button></div></section>
+          <section class="rounded-[22px] bg-slate-50 p-4 dark:bg-slate-900"><h4 class="text-[13px] font-semibold">移动设备</h4><div class="mt-3 grid gap-2"><div v-for="device in trustedDevices" :key="device.deviceId" class="rounded-2xl bg-white p-3 text-[12px] dark:bg-slate-950"><div class="flex items-center justify-between"><span class="font-semibold">{{ device.remark || device.displayName }}</span><span class="text-green-600">已信任</span></div><p class="mt-1 truncate text-slate-500">{{ device.deviceId }} · {{ new Date(device.createdAt).toLocaleString() }}</p><div class="mt-3 flex gap-2"><input v-model="deviceRemarkDraft[device.deviceId]" class="field min-w-0 flex-1" :placeholder="device.remark || '设备备注'" /><button class="rounded-xl bg-sky-500 px-3 text-white" @click="renameDevice(device)">保存</button></div></div><div v-if="!trustedDevices.length" class="rounded-2xl bg-white p-4 text-[12px] leading-6 text-slate-500 dark:bg-slate-950">暂无移动设备。请在手机端打开 OneDesk，输入右侧本机 IP、端口和验证码建立首次信任。</div></div><h4 class="mt-4 text-[13px] font-semibold">在线连接</h4><div class="mt-3 grid gap-2"><div v-for="peer in workspace.gatewayStatus?.peers" :key="peer.deviceId" class="rounded-2xl bg-white p-3 text-[12px] dark:bg-slate-950"><div class="flex items-center justify-between"><span class="font-semibold">{{ peer.deviceId }}</span><span :class="peer.online ? 'text-green-600' : 'text-slate-400'">{{ peer.online ? '在线' : '离线' }}</span></div><p class="mt-1 text-slate-500">{{ peer.endpoint }}</p></div><div v-if="!workspace.gatewayStatus?.peers.length" class="rounded-2xl bg-white p-3 text-[12px] text-slate-500 dark:bg-slate-950">暂无在线移动端</div></div></section>
+          <section class="rounded-[22px] bg-slate-50 p-4 dark:bg-slate-900"><h4 class="text-[13px] font-semibold">本机连接信息</h4><div class="mt-3 grid gap-2 text-[12px]"><div class="rounded-2xl bg-white p-3 dark:bg-slate-950"><p class="text-slate-500">局域网 IP</p><p class="mt-1 text-[18px] font-semibold text-sky-500">{{ localPairingHost }}</p><p class="mt-2 text-[11px] text-slate-500">可用 IP：{{ pairing?.localIps?.join(' / ') || workspace.deviceStatus?.localIps?.join(' / ') || '未检测到' }}</p></div><div class="rounded-2xl bg-white p-3 dark:bg-slate-950"><p class="text-slate-500">端口</p><p class="mt-1 text-[18px] font-semibold">{{ pairing?.port ?? workspace.gatewayStatus?.port ?? 48320 }}</p></div><div class="rounded-2xl bg-white p-4 text-center dark:bg-slate-950"><p class="text-[28px] font-semibold tracking-[0.3em] text-sky-500">{{ pairing?.code ?? "------" }}</p><p class="mt-1 text-[11px] text-slate-500">验证码 5 分钟内有效，只用于首次换取长期信任凭据</p></div><div class="rounded-2xl bg-white p-3 dark:bg-slate-950"><p class="text-[12px] font-semibold">二维码内容</p><p class="mt-2 break-all text-[11px] leading-5 text-slate-500">{{ pairing?.qrPayload ?? "点击生成验证码后显示" }}</p></div><button class="rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="openDeviceDialog(true)">生成验证码</button></div></section>
         </div>
       </div>
     </div>
 
     <div v-if="showPermissionDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
-      <div class="w-full max-w-[460px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><div class="flex items-center justify-between"><h3 class="text-[16px] font-semibold">确认授权</h3><button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showPermissionDialog = false"><Icon icon="solar:close-circle-bold-duotone" class="size-5" /></button></div><div class="mt-4 grid gap-2"><label v-for="permission in selectedComponent?.requestedPermissions" :key="permission.capability" class="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[13px] dark:bg-slate-900"><input type="checkbox" checked class="size-4 accent-sky-500" /><span class="min-w-0 flex-1"><span class="block font-medium">{{ permission.capability }}</span><span class="mt-0.5 block text-[12px] text-slate-500">{{ permission.description }}</span></span><span v-if="permission.highRisk" class="rounded-full bg-rose-100 px-2 py-1 text-[11px] font-medium text-rose-600 dark:bg-rose-950 dark:text-rose-300">高危</span></label></div><button class="mt-4 w-full rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="showPermissionDialog = false">授权并导入</button></div>
+      <div class="w-full max-w-[460px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><div class="flex items-center justify-between"><h3 class="text-[16px] font-semibold">确认授权</h3><button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="pendingImportKind = null; pendingPluginImport = false; showPermissionDialog = false"><Icon icon="solar:close-circle-bold-duotone" class="size-5" /></button></div><p class="mt-3 text-[12px] leading-5 text-slate-500">导入或安装前会按照能力目录授权，默认同意；高危权限会明确标记，后续可在设置里修改。</p><div class="mt-4 grid gap-2"><label v-for="permission in selectedComponent?.requestedPermissions" :key="permission.capability" class="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[13px] dark:bg-slate-900"><input type="checkbox" checked class="size-4 accent-sky-500" /><span class="min-w-0 flex-1"><span class="block font-medium">{{ permission.capability }}</span><span class="mt-0.5 block text-[12px] text-slate-500">{{ permission.description }}</span></span><span v-if="permission.highRisk" class="rounded-full bg-rose-100 px-2 py-1 text-[11px] font-medium text-rose-600 dark:bg-rose-950 dark:text-rose-300">高危</span></label><div v-if="!selectedComponent?.requestedPermissions.length" class="rounded-2xl bg-slate-50 px-3 py-2.5 text-[13px] text-slate-500 dark:bg-slate-900">当前对象没有声明额外权限。</div></div><button class="mt-4 w-full rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="confirmPermissionDialog">{{ pendingImportKind || pendingPluginImport ? '授权并选择导入文件' : '确认授权' }}</button></div>
     </div>
 
     <div v-if="showCodeSwitchDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
-      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><Icon icon="solar:danger-triangle-bold-duotone" class="size-9 text-amber-500" /><h3 class="mt-3 text-[16px] font-semibold">切换到代码编辑？</h3><p class="mt-2 text-[13px] leading-6 text-slate-500">切换后无法回到可视化编辑，因为任意 Vue 代码无法完整还原为可视化配置。</p><div class="mt-4 flex gap-2"><button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="showCodeSwitchDialog = false">取消</button><button class="flex-1 rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="componentEditorMode = 'code'; showCodeSwitchDialog = false">继续</button></div></div>
+      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><Icon icon="solar:danger-triangle-bold-duotone" class="size-9 text-amber-500" /><h3 class="mt-3 text-[16px] font-semibold">切换到代码编辑？</h3><p class="mt-2 text-[13px] leading-6 text-slate-500">切换后无法回到可视化编辑，因为任意 Vue 代码无法完整还原为可视化配置。</p><div class="mt-4 flex gap-2"><button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="showCodeSwitchDialog = false">取消</button><button class="flex-1 rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="componentCodeDraft = generatedComponentCode(selectedComponent); componentEditorMode = 'code'; showCodeSwitchDialog = false">继续</button></div></div>
     </div>
   </main>
 </template>

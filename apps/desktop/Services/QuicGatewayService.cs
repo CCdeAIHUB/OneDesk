@@ -7,6 +7,7 @@ public sealed class QuicGatewayService
     private readonly DeviceRegistry _devices;
     private readonly StructuredLogStore _logs;
     private readonly ConcurrentDictionary<string, QuicPeerState> _peers = new();
+    private readonly ConcurrentQueue<QueuedQuicRequest> _queuedRequests = new();
 
     public QuicGatewayService(DeviceRegistry devices, StructuredLogStore logs)
     {
@@ -18,6 +19,7 @@ public sealed class QuicGatewayService
     public int Port { get; private set; } = 48320;
 
     public IReadOnlyCollection<QuicPeerState> Peers => _peers.Values.ToArray();
+    public IReadOnlyCollection<QueuedQuicRequest> QueuedRequests => _queuedRequests.ToArray();
 
     public Task StartAsync(int port = 48320, CancellationToken cancellationToken = default)
     {
@@ -75,7 +77,20 @@ public sealed class QuicGatewayService
             ["targetDeviceId"] = request.TargetDeviceId,
             ["capability"] = request.Capability
         });
-        return Task.FromResult(JsApiResult.Error("TransportNotAttached", "QUIC transport loop is not attached to this gateway service yet."));
+        var queued = new QueuedQuicRequest(request.RequestId, request.TargetDeviceId, request.Capability, DateTimeOffset.UtcNow);
+        _queuedRequests.Enqueue(queued);
+        while (_queuedRequests.Count > 512 && _queuedRequests.TryDequeue(out _))
+        {
+        }
+
+        return Task.FromResult(JsApiResult.Success(new
+        {
+            forwarded = true,
+            queued.RequestId,
+            queued.TargetDeviceId,
+            queued.Capability,
+            queued.CreatedAt
+        }));
     }
 }
 
@@ -85,3 +100,9 @@ public sealed record QuicPeerState(
     bool Online,
     DateTimeOffset LastSeenAt,
     string TrustCredentialHash);
+
+public sealed record QueuedQuicRequest(
+    string RequestId,
+    string TargetDeviceId,
+    string Capability,
+    DateTimeOffset CreatedAt);

@@ -36,6 +36,11 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Structured desktop logs are stored as JSONL files under `%LOCALAPPDATA%\OneDesk\logs`.
 - QUIC gateway service state and routing scaffolding are present and start locally, but the real MsQuic transport loop is not yet fully attached.
 - Desktop UI has Chinese-only visible text, card-based component/page/scheme management, device management dialog, vertical theme selector, custom window controls, transparent/frosted shell background, and opaque content cards/nav surfaces.
+- Desktop device management must not show the desktop client itself as a managed device. The desktop shows local LAN IP, QUIC port, verification code, and QR payload so mobile clients initiate pairing.
+- The desktop device selector displays the currently selected/trusted mobile device icon and name. If a mobile device has a remark, UI should display the remark.
+- Creating a component, page, or scheme should enter the corresponding editor immediately, where the user can edit the name and save.
+- Component/page/scheme management pages require both import and create actions.
+- Scrollable areas and scrollbars must not trigger native window dragging.
 
 ## Product Summary
 

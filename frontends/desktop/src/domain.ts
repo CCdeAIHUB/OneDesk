@@ -149,11 +149,13 @@ export interface GatewayStatus {
   running: boolean;
   port: number;
   peers: QuicPeerState[];
+  queuedRequests?: unknown[];
 }
 
 export interface TrustedPairingCredential {
   deviceId: string;
   displayName: string;
+  remark?: string | null;
   token: string;
   createdAt: string;
 }
@@ -163,6 +165,7 @@ export interface DeviceStatusSnapshot {
   devices: DeviceIdentity[];
   trusted: TrustedPairingCredential[];
   gateway: GatewayStatus;
+  localIps: string[];
   logs: unknown[];
 }
 
@@ -182,6 +185,12 @@ export interface PackageExportResult {
   packagePath: string;
   sha256: string;
   sizeBytes: number;
+}
+
+export interface PackageImportResult {
+  ready: boolean;
+  destinationDirectory: string;
+  missingPluginIds: string[];
 }
 
 export interface SchemeCacheManifest {
@@ -224,4 +233,16 @@ export interface QuickAction {
 
 export interface QuickStartItem extends QuickAction {
   desc: string;
+}
+
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  persistent: boolean;
+  permissions: PermissionGrant[];
+  frontend?: unknown;
+  backend?: unknown;
+  settingsSchema?: Record<string, unknown> | null;
+  selfContained?: boolean;
 }

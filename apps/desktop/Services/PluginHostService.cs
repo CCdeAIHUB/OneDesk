@@ -19,6 +19,8 @@ public sealed class PluginHostService : IDisposable
 
     public IReadOnlyList<Process> Processes => _processes;
 
+    public IReadOnlyList<PluginManifest> InstalledPlugins => _plugins.Values.Select(registration => registration.Manifest).ToArray();
+
     public async Task RegisterManifestAsync(PluginManifest manifest, string packageDirectory = "", CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -10,6 +10,7 @@ import type {
   NavigationItem,
   PageDefinition,
   PermissionListSnapshot,
+  PluginManifest,
   QuickAction,
   QuickStartItem,
   SchemeDefinition,
@@ -27,7 +28,7 @@ export const navItems: NavigationItem[] = [
 ];
 
 export const workspace = reactive({
-  selectedDevice: "OneDesk Desktop",
+  selectedDevice: "未选择移动设备",
   toast: "工作区已就绪",
   selectedComponentId: "component-scene-switch",
   selectedPageId: "page-capture",
@@ -39,6 +40,7 @@ export const workspace = reactive({
   devices: [] as DeviceIdentity[],
   capabilities: [] as CapabilityCategory[],
   logs: [] as unknown[],
+  plugins: [] as PluginManifest[],
   permissionGrants: [] as PermissionListSnapshot["grants"],
   deviceStatus: null as DeviceStatusSnapshot | null,
   gatewayStatus: null as GatewayStatus | null,
@@ -54,7 +56,7 @@ export const quickActions: QuickAction[] = [
 ];
 
 export const quickStart: QuickStartItem[] = [
-  { label: "连接新设备", desc: "连接并设置新的控制设备", icon: "solar:usb-bold-duotone", color: "text-sky-500" },
+  { label: "显示连接码", desc: "让手机端连接本机桌面端", icon: "solar:qr-code-bold-duotone", color: "text-sky-500" },
   { label: "浏览插件", desc: "扩展你的 OneDesk 能力", icon: "solar:plug-circle-bold-duotone", color: "text-green-500" },
   { label: "使用帮助", desc: "查看使用文档和教程", icon: "solar:question-circle-bold-duotone", color: "text-violet-500" },
 ];
@@ -62,7 +64,7 @@ export const quickStart: QuickStartItem[] = [
 export async function loadWorkspace(): Promise<void> {
   workspace.loading = true;
   try {
-    const [workspaceResponse, capabilityResponse, logResponse, permissionResponse, deviceResponse, gatewayResponse, cacheResponse] = await Promise.all([
+    const [workspaceResponse, capabilityResponse, logResponse, permissionResponse, deviceResponse, gatewayResponse, cacheResponse, pluginResponse] = await Promise.all([
       sendShell<WorkspaceSnapshot>("workspace.list"),
       sendShell<CapabilityCategory[]>("capability.list"),
       sendShell<unknown[]>("log.list"),
@@ -70,6 +72,7 @@ export async function loadWorkspace(): Promise<void> {
       sendShell<DeviceStatusSnapshot>("device.status"),
       sendShell<GatewayStatus>("gateway.status"),
       sendShell<SchemeCacheManifest | null>("scheme.cacheManifest"),
+      sendShell<PluginManifest[]>("plugin.list"),
     ]);
 
     if (workspaceResponse.ok && workspaceResponse.payload) {
@@ -77,12 +80,12 @@ export async function loadWorkspace(): Promise<void> {
       workspace.actions = workspaceResponse.payload.actions;
       workspace.pages = workspaceResponse.payload.pages;
       workspace.schemes = workspaceResponse.payload.schemes;
-      workspace.devices = workspaceResponse.payload.devices;
+      workspace.devices = workspaceResponse.payload.devices.filter((device) => String(device.kind).toLowerCase() !== "desktop" && !device.deviceId.startsWith("desktop-"));
       workspace.activeSchemeId = workspaceResponse.payload.activeScheme?.schemeId ?? "";
       workspace.selectedComponentId = workspace.components[0]?.id ?? "";
       workspace.selectedPageId = workspace.pages[0]?.id ?? "";
       workspace.selectedSchemeId = workspace.schemes[0]?.id ?? "";
-      workspace.selectedDevice = workspace.devices[0]?.displayName ?? "OneDesk Desktop";
+      workspace.selectedDevice = workspace.devices[0]?.displayName ?? "未选择移动设备";
     } else {
       applyPreviewData();
     }
@@ -109,6 +112,10 @@ export async function loadWorkspace(): Promise<void> {
 
     if (cacheResponse.ok) {
       workspace.cacheManifest = cacheResponse.payload ?? null;
+    }
+
+    if (pluginResponse.ok && pluginResponse.payload) {
+      workspace.plugins = pluginResponse.payload;
     }
   } finally {
     workspace.loading = false;

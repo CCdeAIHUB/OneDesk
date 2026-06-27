@@ -43,10 +43,23 @@ public sealed class PairingService
         var credential = new TrustedPairingCredential(
             deviceId,
             displayName,
+            null,
             Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)),
             DateTimeOffset.UtcNow);
         _trusted[deviceId] = credential;
         return credential;
+    }
+
+    public TrustedPairingCredential? RenameTrustedDevice(string deviceId, string remark)
+    {
+        if (!_trusted.TryGetValue(deviceId, out var credential))
+        {
+            return null;
+        }
+
+        var renamed = credential with { Remark = string.IsNullOrWhiteSpace(remark) ? null : remark.Trim() };
+        _trusted[deviceId] = renamed;
+        return renamed;
     }
 
     public bool ValidateTrustCredential(string deviceId, string token)
@@ -84,5 +97,6 @@ public sealed record PairingCodeState(string Code, DateTimeOffset ExpiresAt, int
 public sealed record TrustedPairingCredential(
     string DeviceId,
     string DisplayName,
+    string? Remark,
     string Token,
     DateTimeOffset CreatedAt);
