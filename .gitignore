@@ -1,0 +1,15 @@
+﻿node_modules/
+dist/
+build/
+.vite/
+.pnpm-store/
+.DS_Store
+bin/
+obj/
+.gradle/
+.idea/
+.vscode/
+*.user
+*.suo
+*.log
+local.properties
