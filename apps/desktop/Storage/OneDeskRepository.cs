@@ -1,3 +1,4 @@
+using System.IO;
 using OneDesk.Desktop.Domain;
 
 namespace OneDesk.Desktop.Storage;

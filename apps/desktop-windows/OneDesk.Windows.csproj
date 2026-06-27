@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OneDesk</AssemblyName>
+    <RootNamespace>OneDesk.Windows</RootNamespace>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\desktop\Domain\*.cs" LinkBase="Domain" />
+    <Compile Include="..\desktop\Storage\*.cs" LinkBase="Storage" />
+    <Compile Include="..\desktop\Services\Models.cs" Link="Services\Models.cs" />
+    <Compile Include="..\desktop\Services\DeviceRegistry.cs" Link="Services\DeviceRegistry.cs" />
+    <Compile Include="..\desktop\Services\FrontendNetworkPolicy.cs" Link="Services\FrontendNetworkPolicy.cs" />
+    <Compile Include="..\desktop\Services\JsApiRouter.cs" Link="Services\JsApiRouter.cs" />
+    <Compile Include="..\desktop\Services\PairingService.cs" Link="Services\PairingService.cs" />
+    <Compile Include="..\desktop\Services\PermissionService.cs" Link="Services\PermissionService.cs" />
+    <Compile Include="..\desktop\Services\PluginHostService.cs" Link="Services\PluginHostService.cs" />
+    <Compile Include="..\desktop\Services\SchemePackageService.cs" Link="Services\SchemePackageService.cs" />
+    <Compile Include="..\desktop\Services\StructuredLogStore.cs" Link="Services\StructuredLogStore.cs" />
+    <Compile Include="..\desktop\Services\WorkspaceBootstrapper.cs" Link="Services\WorkspaceBootstrapper.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\frontends\desktop\dist\**\*">
+      <Link>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

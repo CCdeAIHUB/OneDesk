@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace OneDesk.Desktop.Storage;
 
 public sealed class OneDeskDataPaths

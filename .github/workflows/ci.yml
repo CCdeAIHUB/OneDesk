@@ -27,6 +27,8 @@ jobs:
         run: pnpm build
       - name: Build desktop shell
         run: dotnet build apps/desktop/OneDesk.Desktop.csproj --configuration Release
+      - name: Build Windows Chromium desktop app
+        run: dotnet build apps/desktop-windows/OneDesk.Windows.csproj --configuration Release
 
   android:
     name: Android

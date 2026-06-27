@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.IO;
 using OneDesk.Desktop.Domain;
 using OneDesk.Desktop.Storage;
 
