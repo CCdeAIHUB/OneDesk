@@ -125,6 +125,8 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Desktop shell and mobile shell must load frontend assets using `file://`.
 - Frontend code must not implement network communication.
 - All network communication must be forwarded through native shells.
+- Shells must enforce frontend networking restrictions rather than relying only on convention.
+- Desktop Chromium/CEF, Android WebView, and iOS WKWebView should block or intercept direct frontend networking primitives and remote resource loading, including fetch/XHR, WebSocket, navigation to remote URLs, and remote asset requests where technically possible.
 - Desktop and mobile communicate using QUIC over UDP.
 - QUIC implementation choice: MsQuic.
 - Protocol definitions should use schema-driven definitions that can generate or synchronize types for C#, Kotlin, Swift, and TypeScript.
@@ -140,6 +142,10 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - The desktop acts as the JSAPI gateway/router.
 - Mobile-to-mobile JSAPI calls must be routed through the connected desktop. Mobile devices do not directly send JSAPI calls to each other.
 - JSAPI calls should carry a calling source identity such as component ID, plugin ID, scheme ID, and target device ID so permissions can be enforced.
+- JSAPI calling source identity must be injected by the trusted runtime container or shell, not freely supplied by component, plugin, or frontend code.
+- Frontend code may provide target device ID and call parameters, but must not be trusted to self-declare component/plugin/scheme identity.
+- JSAPI capability directory must be complete. This is a required and important project item.
+- JSAPI capability directory should first define the capability registration mechanism and common error model, then list desktop, Android, and iOS capability support tables.
 
 ## JSAPI Routing Rules
 
@@ -167,6 +173,9 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - High-risk permissions are defined by OneDesk.
 - High-risk permissions should include at least file deletion/modification outside plugin/component private storage, process control, memory read/write, keyboard/mouse simulation, network access, clipboard read/write, camera, microphone, screen capture/recording, persistent background execution, credential/keychain access, shell command execution, and cross-device sensitive JSAPI access.
 - Code-edited components and externally imported Vue component projects must include a manifest declaring requested permissions.
+- Component permissions must travel with schemes when schemes are packaged, cached, and applied to mobile devices.
+- Scheme cache should include component manifests, granted permission state, versions, and hashes.
+- If code-edited or externally imported component code calls an undeclared or unauthorized JSAPI capability, runtime must reject the call and log it.
 
 ## Components
 
@@ -196,6 +205,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Import must support Vue 3 component projects edited by external editors.
 - If an imported package is a valid visual-editor project and has no validation errors, it can continue to use visual editing.
 - If an imported package is a plain Vue 3 component project or a project that has entered code editing, it cannot enter visual editing.
+- Component export must include dependent actions.
 
 ## Action System
 
@@ -215,6 +225,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Plugins are part of the current version scope.
 - Plugins are divided into frontend plugins and backend plugins.
 - Frontend plugins are Vue 3 plugins.
+- Frontend plugins must not provide custom UI. They may only provide desktop-frontend runtime logic, extension-point scripts, action/configuration helpers, or settings schema helpers that are rendered by OneDesk-controlled UI.
 - Backend plugins use system capabilities through a desktop-side plugin framework.
 - Backend plugins use an independent-process plugin model with a language-agnostic protocol, so developers can write plugins in any language as long as they implement the OneDesk plugin protocol.
 - Both frontend plugins and backend plugins run only on the desktop side.
@@ -241,6 +252,8 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Plugin packages should be self-contained by default.
 - Plugin install/import must show the standard permission dialog before installation/import completion.
 - Online plugin marketplace is not required.
+- Independent-process backend plugins can technically access system resources outside OneDesk's JSAPI/permission gateway depending on the operating system and plugin implementation.
+- OneDesk will notify users of this security boundary when installing/importing plugins, but does not need to add stronger sandbox constraints at this stage.
 
 ## Trigger Priority
 
@@ -265,6 +278,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Pages require a page management page and a page editing page.
 - Pages support import and export.
 - Page export must package the page and all components contained by that page.
+- Page export must also include dependent actions through its contained components.
 - A page is a standalone full-screen app page on mobile.
 - A page contains a grid matrix similar to Tailwind CSS grid.
 - Users can set grid row count and column count.
@@ -295,12 +309,19 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - A scheme is the only final artifact that can be applied to a mobile device.
 - Each mobile device can have only one active applied scheme at the same time.
 - Applying a new scheme to a mobile device replaces the old scheme.
+- Schemes support import and export.
+- Scheme export must include contained pages, components, actions, and required plugin dependencies.
+- Scheme import/install must check required plugin dependencies.
+- If required plugins are missing, OneDesk should install/import the included plugin dependencies.
+- If required plugin versions conflict with installed plugin versions, OneDesk must notify the user and let the user choose how to proceed.
+- If a scheme depends on plugins that are missing, disabled, unauthorized, or version-incompatible, affected components/actions should show a clear error state instead of failing silently.
 
 ## Pairing Direction
 
 - Pairing will support manual IP input plus verification code.
 - Pairing will support QR-code scanning.
-- Detailed pairing behavior is not finalized yet and will be described by the user later.
+- Pairing QR code is generated by the desktop client and contains connection IP, port, and verification code information.
+- The mobile client can scan the QR code to connect directly.
 
 ## Locked Modules
 
