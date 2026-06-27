@@ -200,6 +200,20 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Action execution can call JSAPI capabilities.
 - The action system exists only in visual editing. In code editing, users manually write related logic.
 
+## Plugin System
+
+- Plugins are part of the current version scope.
+- Plugins are divided into frontend plugins and backend plugins.
+- Frontend plugins are Vue 3 plugins.
+- Backend plugins use system capabilities through a desktop-side plugin framework.
+- Both frontend plugins and backend plugins run only on the desktop side.
+- Mobile devices do not run plugins directly.
+- If a mobile device needs plugin functionality, it sends a JSAPI request through the desktop gateway and the desktop invokes the plugin.
+- Backend plugins should have enough access to useful system capabilities, but their permissions are managed by the OneDesk client.
+- The plugin framework should prioritize cross-platform support because OneDesk supports Windows, macOS, and Linux.
+- Plugin permissions must integrate with the JSAPI permission model and should be categorized by major capability category and sub-capability.
+- Plugin execution and plugin-originated JSAPI calls must be logged by the desktop.
+
 ## Trigger Priority
 
 - Trigger conflicts are resolved by priority:
