@@ -19,13 +19,11 @@ body {
   min-width: 1024px;
   min-height: 720px;
   overflow: hidden;
-  background:
-    linear-gradient(135deg, rgb(190 215 232), rgb(240 247 251) 42%, rgb(210 229 242));
+  background: transparent;
 }
 
 .dark body {
-  background:
-    linear-gradient(135deg, rgb(15 23 42), rgb(2 6 23) 44%, rgb(8 47 73));
+  background: transparent;
 }
 
 button,
@@ -93,5 +91,39 @@ textarea {
 
 .dark .field {
   background: rgb(30 41 59);
+  color: white;
+}
+
+.theme-dot {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  color: rgb(100 116 139);
+}
+
+.theme-dot:hover,
+.theme-dot-active {
+  background: rgb(14 165 233);
+  color: white;
+}
+
+.editor-nav,
+.editor-nav-active {
+  height: 34px;
+  border-radius: 14px;
+  padding: 0 12px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.editor-nav {
+  color: rgb(100 116 139);
+}
+
+.editor-nav:hover,
+.editor-nav-active {
+  background: rgb(14 165 233);
   color: white;
 }
