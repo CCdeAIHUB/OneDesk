@@ -13,7 +13,7 @@ export const navItems: NavigationItem[] = [
   { key: "home", label: "首页", icon: "solar:widget-2-bold-duotone" },
   { key: "component", label: "组件", icon: "solar:card-bold-duotone" },
   { key: "page", label: "页面", icon: "solar:layers-bold-duotone" },
-  { key: "scheme", label: "方案", icon: "solar:play-square-bold-duotone" },
+  { key: "scheme", label: "方案", icon: "solar:play-circle-bold-duotone" },
   { key: "plugin", label: "插件", icon: "solar:plug-circle-bold-duotone" },
   { key: "permission", label: "设置", icon: "solar:settings-bold-duotone" },
   { key: "log", label: "账户", icon: "solar:user-rounded-bold-duotone" },

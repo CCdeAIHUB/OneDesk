@@ -33,6 +33,7 @@ public sealed class MainForm : Form
     private DeviceRegistry? _devices;
     private JsApiRouter? _jsApiRouter;
     private OneDeskRepository? _repository;
+    private Label? _loadingLabel;
     private readonly List<Control> _resizeHandles = [];
 
     public MainForm()
@@ -46,7 +47,7 @@ public sealed class MainForm : Form
         FormBorderStyle = FormBorderStyle.None;
         DoubleBuffered = true;
 
-        var loadingLabel = new Label
+        _loadingLabel = new Label
         {
             Dock = DockStyle.Fill,
             Text = "OneDesk 正在加载...",
@@ -54,7 +55,7 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(54, 65, 82),
             Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Regular, GraphicsUnit.Point)
         };
-        Controls.Add(loadingLabel);
+        Controls.Add(_loadingLabel);
         AppDiagnostics.Write("Loading surface created.");
         CreateResizeHandles();
 
@@ -259,6 +260,7 @@ public sealed class MainForm : Form
     {
         if (disposing)
         {
+            _loadingLabel?.Dispose();
             _browser?.Dispose();
             _services?.Dispose();
         }
@@ -279,6 +281,7 @@ public sealed class MainForm : Form
             Controls.Add(_browser);
             _browser.BringToFront();
             BringResizeHandlesToFront();
+            RemoveLoadingSurface();
             AppDiagnostics.Write("WebView2 control created.");
 
             await _browser.EnsureCoreWebView2Async();
@@ -516,22 +519,131 @@ public sealed class MainForm : Form
     {
         var theme = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : "light";
         var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
-        var color = dark ? Color.FromArgb(30, 41, 59) : Color.FromArgb(248, 252, 255);
+        var color = dark ? Color.Black : Color.FromArgb(248, 252, 255);
+        Opacity = dark ? 0.96d : 1d;
         BackColor = color;
         foreach (var handle in _resizeHandles)
         {
             handle.BackColor = color;
         }
 
+        ApplyDwmBackdrop(dark);
         return new BridgeResponse(message.RequestId, true, null);
     }
 
     private void ToggleMaximize()
     {
-        WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+        if (WindowState == FormWindowState.Maximized)
+        {
+            WindowState = FormWindowState.Normal;
+            ApplyRoundedWindow();
+            return;
+        }
+
+        MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
+        Region = null;
+        WindowState = FormWindowState.Maximized;
+    }
+
+    private void RemoveLoadingSurface()
+    {
+        if (_loadingLabel is null)
+        {
+            return;
+        }
+
+        Controls.Remove(_loadingLabel);
+        _loadingLabel.Dispose();
+        _loadingLabel = null;
+        AppDiagnostics.Write("Loading surface removed.");
+    }
+
+    private void ApplyDwmBackdrop(bool dark)
+    {
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10))
+        {
+            return;
+        }
+
+        try
+        {
+            var darkMode = dark ? 1 : 0;
+            _ = DwmSetWindowAttribute(Handle, DwmwaUseImmersiveDarkMode, ref darkMode, sizeof(int));
+
+            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+            {
+                var backdropType = dark ? DwmSystemBackdropAcrylic : DwmSystemBackdropMica;
+                _ = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType, ref backdropType, sizeof(int));
+            }
+
+            ApplyAcrylicAccent(dark);
+        }
+        catch
+        {
+            // DWM backdrop support varies by Windows build; WebView remains usable without it.
+        }
+    }
+
+    private void ApplyAcrylicAccent(bool dark)
+    {
+        var accent = new AccentPolicy
+        {
+            AccentState = AccentEnableAcrylicBlurBehind,
+            AccentFlags = 2,
+            GradientColor = dark ? unchecked((int)0x70000000) : unchecked((int)0x66F8FCFF)
+        };
+        var accentSize = Marshal.SizeOf<AccentPolicy>();
+        var accentPtr = Marshal.AllocHGlobal(accentSize);
+
+        try
+        {
+            Marshal.StructureToPtr(accent, accentPtr, false);
+            var data = new WindowCompositionAttributeData
+            {
+                Attribute = WcaAccentPolicy,
+                Data = accentPtr,
+                SizeOfData = accentSize
+            };
+            _ = SetWindowCompositionAttribute(Handle, ref data);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(accentPtr);
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaSystemBackdropType = 38;
+    private const int DwmSystemBackdropMica = 2;
+    private const int DwmSystemBackdropAcrylic = 3;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+    private const int WcaAccentPolicy = 19;
+    private const int AccentEnableAcrylicBlurBehind = 4;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AccentPolicy
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public int GradientColor;
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowCompositionAttributeData
+    {
+        public int Attribute;
+        public nint Data;
+        public int SizeOfData;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowCompositionAttribute(nint hwnd, ref WindowCompositionAttributeData data);
 
     private const string NativeBridgeScript = """
 (() => {

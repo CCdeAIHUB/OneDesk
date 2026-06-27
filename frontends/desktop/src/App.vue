@@ -18,6 +18,10 @@ const exportProgress = ref(0);
 
 const viewTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label ?? "首页");
 
+function navIcon(item: (typeof navItems)[number]) {
+  return activeView.value === item.key ? item.icon.replace("-bold-duotone", "-bold") : item.icon;
+}
+
 function openView(view: ViewKey) {
   activeView.value = view;
   if (view === "component") componentRoute.value = "manager";
@@ -64,7 +68,7 @@ function startExport() {
             :title="item.label"
             @click="openView(item.key)"
           >
-            <Icon :icon="item.icon" class="size-[21px]" />
+            <Icon :icon="navIcon(item)" class="size-[21px]" />
           </button>
         </nav>
       </aside>
@@ -94,15 +98,15 @@ function startExport() {
               </div>
             </div>
 
-            <div class="ml-2 flex items-center gap-1 text-slate-500 dark:text-slate-300">
-              <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最小化" @click="minimizeWindow">
-                <Icon icon="fluent:arrow-minimize-16-regular" class="size-4" />
+            <div class="window-controls ml-2 flex items-center text-slate-500 dark:text-slate-300">
+              <button class="window-control" title="最小化" @click="minimizeWindow">
+                <span class="win-symbol">&#xE921;</span>
               </button>
-              <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最大化" @click="maximizeWindow">
-                <Icon icon="fluent:maximize-16-regular" class="size-4" />
+              <button class="window-control" title="最大化" @click="maximizeWindow">
+                <span class="win-symbol">&#xE922;</span>
               </button>
-              <button class="grid size-8 place-items-center rounded-full hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/60" title="关闭" @click="closeWindow">
-                <Icon icon="fluent:dismiss-16-regular" class="size-4" />
+              <button class="window-control window-control-close" title="关闭" @click="closeWindow">
+                <span class="win-symbol">&#xE8BB;</span>
               </button>
             </div>
           </div>

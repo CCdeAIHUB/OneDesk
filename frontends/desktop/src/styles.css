@@ -45,9 +45,7 @@ textarea {
 }
 
 .dark .app-shell {
-  background:
-    linear-gradient(135deg, rgb(15 23 42 / 0.56), rgb(30 41 59 / 0.38)),
-    rgb(15 23 42 / 0.26);
+  background: rgb(0 0 0 / 0.42);
 }
 
 header p {
@@ -127,6 +125,43 @@ header p {
 .theme-dot-active {
   background: rgb(14 165 233);
   color: white;
+}
+
+.window-controls {
+  height: 32px;
+}
+
+.window-control {
+  display: grid;
+  width: 46px;
+  height: 32px;
+  place-items: center;
+  color: inherit;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.window-control:hover {
+  background: rgb(255 255 255 / 0.72);
+  color: rgb(15 23 42);
+}
+
+.dark .window-control:hover {
+  background: rgb(255 255 255 / 0.12);
+  color: white;
+}
+
+.window-control-close:hover,
+.dark .window-control-close:hover {
+  background: rgb(232 17 35);
+  color: white;
+}
+
+.win-symbol {
+  font-family: "Segoe MDL2 Assets", "Segoe Fluent Icons", "Segoe UI Symbol", sans-serif;
+  font-size: 10px;
+  line-height: 1;
 }
 
 .editor-nav,
