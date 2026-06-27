@@ -15,6 +15,8 @@ public sealed class OneDeskDataPaths
         Schemes = Path.Combine(Root, "schemes");
         Plugins = Path.Combine(Root, "plugins");
         Logs = Path.Combine(Root, "logs");
+        Exports = Path.Combine(Root, "exports");
+        Cache = Path.Combine(Root, "cache");
         Temp = Path.Combine(Root, "temp");
     }
 
@@ -25,6 +27,8 @@ public sealed class OneDeskDataPaths
     public string Schemes { get; }
     public string Plugins { get; }
     public string Logs { get; }
+    public string Exports { get; }
+    public string Cache { get; }
     public string Temp { get; }
 
     public void EnsureCreated()
@@ -36,6 +40,8 @@ public sealed class OneDeskDataPaths
         Directory.CreateDirectory(Schemes);
         Directory.CreateDirectory(Plugins);
         Directory.CreateDirectory(Logs);
+        Directory.CreateDirectory(Exports);
+        Directory.CreateDirectory(Cache);
         Directory.CreateDirectory(Temp);
     }
 }

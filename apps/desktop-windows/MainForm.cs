@@ -1,6 +1,8 @@
 ﻿using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,7 +18,7 @@ public sealed class MainForm : Form
 {
     private static readonly Size InitialWindowSize = new(1200, 780);
     private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
-    private const int ResizeGripSize = 8;
+    private const int ResizeGripSize = 10;
     private const int CornerRadius = 22;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
@@ -39,8 +41,11 @@ public sealed class MainForm : Form
     private DeviceRegistry? _devices;
     private JsApiRouter? _jsApiRouter;
     private OneDeskRepository? _repository;
+    private SchemePackageService? _packages;
+    private PermissionService? _permissions;
     private CapabilityDirectoryService? _capabilityDirectory;
     private PairingService? _pairing;
+    private QuicGatewayService? _gateway;
     private StructuredLogStore? _logs;
     private Label? _loadingLabel;
 
@@ -187,11 +192,15 @@ public sealed class MainForm : Form
         _devices = _services.GetRequiredService<DeviceRegistry>();
         _jsApiRouter = _services.GetRequiredService<JsApiRouter>();
         _repository = _services.GetRequiredService<OneDeskRepository>();
+        _packages = _services.GetRequiredService<SchemePackageService>();
+        _permissions = _services.GetRequiredService<PermissionService>();
         _capabilityDirectory = _services.GetRequiredService<CapabilityDirectoryService>();
         _pairing = _services.GetRequiredService<PairingService>();
+        _gateway = _services.GetRequiredService<QuicGatewayService>();
         _logs = _services.GetRequiredService<StructuredLogStore>();
         AppDiagnostics.Write("Core services resolved.");
         await _services.GetRequiredService<WorkspaceBootstrapper>().EnsureSeedDataAsync();
+        await _gateway.StartAsync();
         AppDiagnostics.Write("Service initialization completed.");
     }
 
@@ -395,8 +404,21 @@ public sealed class MainForm : Form
             "workspace.saveScheme" => await HandleSaveSchemeAsync(message),
             "workspace.deleteScheme" => HandleDeleteScheme(message),
             "workspace.applyScheme" => await HandleApplySchemeAsync(message),
+            "workspace.exportComponent" => await HandleExportComponentAsync(message),
+            "workspace.exportPage" => await HandleExportPageAsync(message),
+            "workspace.exportScheme" => await HandleExportSchemeAsync(message),
             "capability.list" => new BridgeResponse(message.RequestId, true, _capabilityDirectory?.Categories() ?? []),
+            "permission.list" => new BridgeResponse(message.RequestId, true, new
+            {
+                grants = _permissions?.ListGrants() ?? [],
+                categories = _capabilityDirectory?.Categories() ?? []
+            }),
+            "permission.grant" => HandlePermissionGrant(message),
+            "permission.revoke" => HandlePermissionRevoke(message),
             "pairing.generate" => HandlePairingGenerate(message),
+            "device.status" => HandleDeviceStatus(message),
+            "gateway.status" => HandleGatewayStatus(message),
+            "scheme.cacheManifest" => await HandleSchemeCacheManifestAsync(message),
             "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
@@ -570,6 +592,188 @@ public sealed class MainForm : Form
         return new BridgeResponse(message.RequestId, true, await _repository.GetActiveSchemeAsync());
     }
 
+    private async Task<BridgeResponse> HandleExportComponentAsync(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_packages is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _packages.ExportComponentByIdAsync(id));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ExportFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleExportPageAsync(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_packages is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _packages.ExportPageByIdAsync(id));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ExportFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleExportSchemeAsync(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_packages is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _packages.ExportSchemeByIdAsync(id));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ExportFailed", ex.Message);
+        }
+    }
+
+    private BridgeResponse HandlePermissionGrant(BridgeMessage message)
+    {
+        var sourceKey = ReadPayloadString(message, "sourceKey");
+        var capability = ReadPayloadString(message, "capability");
+        if (_permissions is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(sourceKey) || string.IsNullOrWhiteSpace(capability))
+        {
+            return InvalidPayload(message);
+        }
+
+        _permissions.Grant(sourceKey, capability);
+        return new BridgeResponse(message.RequestId, true, _permissions.ListGrants());
+    }
+
+    private BridgeResponse HandlePermissionRevoke(BridgeMessage message)
+    {
+        var sourceKey = ReadPayloadString(message, "sourceKey");
+        var capability = ReadPayloadString(message, "capability");
+        if (_permissions is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(sourceKey) || string.IsNullOrWhiteSpace(capability))
+        {
+            return InvalidPayload(message);
+        }
+
+        _permissions.Revoke(sourceKey, capability);
+        return new BridgeResponse(message.RequestId, true, _permissions.ListGrants());
+    }
+
+    private BridgeResponse HandleDeviceStatus(BridgeMessage message)
+    {
+        return new BridgeResponse(message.RequestId, true, new
+        {
+            desktop = _devices?.DesktopIdentity,
+            devices = _devices?.All() ?? [],
+            trusted = _pairing?.TrustedDevices() ?? [],
+            gateway = GatewayPayload(),
+            logs = _logs?.Recent(80) ?? []
+        });
+    }
+
+    private BridgeResponse HandleGatewayStatus(BridgeMessage message)
+    {
+        return new BridgeResponse(message.RequestId, true, GatewayPayload());
+    }
+
+    private async Task<BridgeResponse> HandleSchemeCacheManifestAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var active = await _repository.GetActiveSchemeAsync();
+        if (active is null)
+        {
+            return new BridgeResponse(message.RequestId, true, null);
+        }
+
+        var scheme = await _repository.GetSchemeAsync(active.SchemeId);
+        var pages = new List<PageDefinition>();
+        var components = new List<ComponentDefinition>();
+        if (scheme is not null)
+        {
+            foreach (var pageId in scheme.PageIds)
+            {
+                var page = await _repository.GetPageAsync(pageId);
+                if (page is null)
+                {
+                    continue;
+                }
+
+                pages.Add(page);
+                foreach (var componentId in page.Cells.Select(cell => cell.ComponentId).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var component = await _repository.GetComponentAsync(componentId!);
+                    if (component is not null)
+                    {
+                        components.Add(component);
+                    }
+                }
+            }
+        }
+
+        var json = JsonSerializer.Serialize(new { active, scheme, pages, components }, JsonOptions);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
+        return new BridgeResponse(message.RequestId, true, new
+        {
+            activeSchemeId = active.SchemeId,
+            active.AppliedAt,
+            pageCount = pages.Count,
+            componentCount = components.Select(component => component.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            hash
+        });
+    }
+
+    private object GatewayPayload()
+    {
+        return new
+        {
+            running = _gateway?.IsRunning ?? false,
+            port = _gateway?.Port ?? 48320,
+            peers = _gateway?.Peers ?? []
+        };
+    }
+
     private BridgeResponse HandlePairingGenerate(BridgeMessage message)
     {
         if (_pairing is null)
@@ -641,13 +845,8 @@ public sealed class MainForm : Form
 
     private void BeginNativeWindowDrag()
     {
-        if (WindowState == FormWindowState.Maximized)
-        {
-            return;
-        }
-
         ReleaseCapture();
-        SendMessage(Handle, WmSysCommand, ScMove | HtCaption, 0);
+        SendMessage(Handle, WmNcLButtonDown, HtCaption, 0);
     }
 
     private void RemoveLoadingSurface()

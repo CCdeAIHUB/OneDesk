@@ -25,6 +25,18 @@ This file records confirmed project decisions and constraints. Keep it updated w
   - Android version.
 - After pushing, do not wait for GitHub CI completion unless the user explicitly asks to wait. Local validation remains required when possible.
 
+## Current Implementation Status
+
+- No module is locked as complete yet.
+- Windows desktop shell currently uses WinForms plus WebView2 as the working Chromium shell while the cross-platform desktop direction remains Avalonia plus Chromium/CEF.
+- The Windows shell enforces direct frontend networking blocks for fetch, XHR, WebSocket, EventSource, sendBeacon, remote navigation, and remote resource requests.
+- The Windows shell exposes bridge requests for workspace list/save/delete/apply, component/page/scheme export, capability list, permission list/grant/revoke, pairing code generation, gateway status, device status, scheme cache manifest, logs, theme, window drag, minimize, maximize/restore, and close.
+- Component/page/scheme export currently writes packages to `%LOCALAPPDATA%\OneDesk\exports`; component export includes actions, page export includes referenced components/actions, and scheme export includes referenced pages/components/actions plus a plugin dependency report.
+- Permission grants are persisted in `%LOCALAPPDATA%\OneDesk\permission-grants.json`.
+- Structured desktop logs are stored as JSONL files under `%LOCALAPPDATA%\OneDesk\logs`.
+- QUIC gateway service state and routing scaffolding are present and start locally, but the real MsQuic transport loop is not yet fully attached.
+- Desktop UI has Chinese-only visible text, card-based component/page/scheme management, device management dialog, vertical theme selector, custom window controls, transparent/frosted shell background, and opaque content cards/nav surfaces.
+
 ## Product Summary
 
 - OneDesk is a control software project conceptually similar to Stream Deck-style control software, but it must not copy Stream Deck's design or implementation.

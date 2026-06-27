@@ -137,6 +137,61 @@ export interface WorkspaceSnapshot {
   devices: DeviceIdentity[];
 }
 
+export interface QuicPeerState {
+  deviceId: string;
+  endpoint: string;
+  online: boolean;
+  lastSeenAt: string;
+  trustCredentialHash: string;
+}
+
+export interface GatewayStatus {
+  running: boolean;
+  port: number;
+  peers: QuicPeerState[];
+}
+
+export interface TrustedPairingCredential {
+  deviceId: string;
+  displayName: string;
+  token: string;
+  createdAt: string;
+}
+
+export interface DeviceStatusSnapshot {
+  desktop?: DeviceIdentity;
+  devices: DeviceIdentity[];
+  trusted: TrustedPairingCredential[];
+  gateway: GatewayStatus;
+  logs: unknown[];
+}
+
+export interface PermissionGrantSnapshot {
+  sourceKey: string;
+  capabilities: string[];
+}
+
+export interface PermissionListSnapshot {
+  grants: PermissionGrantSnapshot[];
+  categories: CapabilityCategory[];
+}
+
+export interface PackageExportResult {
+  ready: boolean;
+  kind: string;
+  packagePath: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface SchemeCacheManifest {
+  activeSchemeId: string;
+  appliedAt: string;
+  pageCount: number;
+  componentCount: number;
+  hash: string;
+}
+
 export interface CapabilitySupport {
   supported: boolean;
   note: string;

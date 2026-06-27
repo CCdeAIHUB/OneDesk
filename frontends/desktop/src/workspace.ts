@@ -5,11 +5,15 @@ import type {
   CapabilityCategory,
   ComponentDefinition,
   DeviceIdentity,
+  DeviceStatusSnapshot,
+  GatewayStatus,
   NavigationItem,
   PageDefinition,
+  PermissionListSnapshot,
   QuickAction,
   QuickStartItem,
   SchemeDefinition,
+  SchemeCacheManifest,
   WorkspaceSnapshot,
 } from "./domain";
 
@@ -35,6 +39,10 @@ export const workspace = reactive({
   devices: [] as DeviceIdentity[],
   capabilities: [] as CapabilityCategory[],
   logs: [] as unknown[],
+  permissionGrants: [] as PermissionListSnapshot["grants"],
+  deviceStatus: null as DeviceStatusSnapshot | null,
+  gatewayStatus: null as GatewayStatus | null,
+  cacheManifest: null as SchemeCacheManifest | null,
   activeSchemeId: "",
   loading: false,
 });
@@ -54,10 +62,14 @@ export const quickStart: QuickStartItem[] = [
 export async function loadWorkspace(): Promise<void> {
   workspace.loading = true;
   try {
-    const [workspaceResponse, capabilityResponse, logResponse] = await Promise.all([
+    const [workspaceResponse, capabilityResponse, logResponse, permissionResponse, deviceResponse, gatewayResponse, cacheResponse] = await Promise.all([
       sendShell<WorkspaceSnapshot>("workspace.list"),
       sendShell<CapabilityCategory[]>("capability.list"),
       sendShell<unknown[]>("log.list"),
+      sendShell<PermissionListSnapshot>("permission.list"),
+      sendShell<DeviceStatusSnapshot>("device.status"),
+      sendShell<GatewayStatus>("gateway.status"),
+      sendShell<SchemeCacheManifest | null>("scheme.cacheManifest"),
     ]);
 
     if (workspaceResponse.ok && workspaceResponse.payload) {
@@ -81,6 +93,22 @@ export async function loadWorkspace(): Promise<void> {
 
     if (logResponse.ok && logResponse.payload) {
       workspace.logs = logResponse.payload;
+    }
+
+    if (permissionResponse.ok && permissionResponse.payload) {
+      workspace.permissionGrants = permissionResponse.payload.grants;
+    }
+
+    if (deviceResponse.ok && deviceResponse.payload) {
+      workspace.deviceStatus = deviceResponse.payload;
+    }
+
+    if (gatewayResponse.ok && gatewayResponse.payload) {
+      workspace.gatewayStatus = gatewayResponse.payload;
+    }
+
+    if (cacheResponse.ok) {
+      workspace.cacheManifest = cacheResponse.payload ?? null;
     }
   } finally {
     workspace.loading = false;
