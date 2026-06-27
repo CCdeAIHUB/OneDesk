@@ -206,6 +206,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Plugins are divided into frontend plugins and backend plugins.
 - Frontend plugins are Vue 3 plugins.
 - Backend plugins use system capabilities through a desktop-side plugin framework.
+- Backend plugins use an independent-process plugin model with a language-agnostic protocol, so developers can write plugins in any language as long as they implement the OneDesk plugin protocol.
 - Both frontend plugins and backend plugins run only on the desktop side.
 - Mobile devices do not run plugins directly.
 - If a mobile device needs plugin functionality, it sends a JSAPI request through the desktop gateway and the desktop invokes the plugin.
@@ -213,6 +214,17 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - The plugin framework should prioritize cross-platform support because OneDesk supports Windows, macOS, and Linux.
 - Plugin permissions must integrate with the JSAPI permission model and should be categorized by major capability category and sub-capability.
 - Plugin execution and plugin-originated JSAPI calls must be logged by the desktop.
+- A plugin package can contain both frontend plugin parts and backend plugin parts.
+- A plugin package can also contain only a frontend plugin or only a backend plugin.
+- Frontend plugin parts and backend plugin parts must not communicate directly. Their communication must go through the desktop shell/plugin host.
+- Plugins must not provide their own UI.
+- If a plugin needs to exchange configuration data with the user, it submits a settings form JSON/schema to the desktop.
+- The desktop generates the settings UI from the plugin-provided settings JSON/schema.
+- After the user fills in settings, the desktop submits the settings data back to the plugin.
+- Plugins are allowed to run persistently in the background when authorized.
+- A plugin package may contain multiple platform-specific backend artifacts under one unified manifest and protocol.
+- A single native compiled backend artifact is not expected to run across Windows, macOS, and Linux. Cross-platform plugin experience is achieved through the plugin package, manifest, and protocol.
+- Plugin manifest should describe plugin identity, version, supported platforms/architectures, frontend entry if present, backend entry if present, permissions, settings schema, and whether background persistence is required.
 
 ## Trigger Priority
 
@@ -284,4 +296,3 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Confirm exact protocol schema technology.
 - Confirm CI matrix and release artifact strategy.
 - User will describe desktop action capability boundaries later.
-- User will describe plugin system requirements later.
