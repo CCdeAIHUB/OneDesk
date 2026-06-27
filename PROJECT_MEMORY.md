@@ -159,6 +159,11 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - If a major category is not granted but an individual sub-capability is granted, only that sub-capability is allowed.
 - Permission management applies to components and plugins.
 - Frontend bridge code itself does not require separate user-facing permission management, but JSAPI execution must still be authorized using the calling source identity.
+- Component import and plugin install/import must show a permission dialog.
+- The permission dialog displays requested permissions grouped by the same major category and sub-capability model.
+- Requested permissions are granted by default in the dialog, but the user can adjust authorization before confirming.
+- High-risk permissions must be clearly marked.
+- Users can later modify component and plugin permissions in settings, including adding or removing granted permissions.
 
 ## Components
 
@@ -183,6 +188,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - The preview content area must use overflow-hidden behavior so component content cannot overflow the parent preview container.
 - The preview window supports configurable preview ratios such as 1:1, 2:3, and 4:6.
 - Components support import and export as compressed packages.
+- Component import must show the standard permission dialog before installation/import completion.
 - Import must support Vue 3 component projects edited by external editors.
 - If an imported package is a valid visual-editor project and has no validation errors, it can continue to use visual editing.
 - If an imported package is a plain Vue 3 component project or a project that has entered code editing, it cannot enter visual editing.
@@ -225,6 +231,11 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - A plugin package may contain multiple platform-specific backend artifacts under one unified manifest and protocol.
 - A single native compiled backend artifact is not expected to run across Windows, macOS, and Linux. Cross-platform plugin experience is achieved through the plugin package, manifest, and protocol.
 - Plugin manifest should describe plugin identity, version, supported platforms/architectures, frontend entry if present, backend entry if present, permissions, settings schema, and whether background persistence is required.
+- Plugin package format: `.onedesk-plugin`, implemented as a zip-compatible compressed package.
+- Plugin settings forms use JSON Schema plus OneDesk extension fields where needed.
+- Backend plugin communication protocol: JSON-RPC.
+- Plugin packages should be self-contained by default.
+- Plugin install/import must show the standard permission dialog before installation/import completion.
 
 ## Trigger Priority
 
