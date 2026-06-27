@@ -39,13 +39,13 @@ textarea {
 
 .app-shell {
   background:
-    linear-gradient(135deg, rgb(255 255 255 / 0.58), rgb(240 249 255 / 0.42)),
-    rgb(255 255 255 / 0.24);
+    linear-gradient(135deg, rgb(255 255 255 / 0.34), rgb(240 249 255 / 0.22)),
+    rgb(255 255 255 / 0.16);
   backdrop-filter: blur(26px) saturate(1.18);
 }
 
 .dark .app-shell {
-  background: rgb(0 0 0 / 0.42);
+  background: rgb(0 0 0 / 0.36);
 }
 
 header p {
@@ -57,13 +57,13 @@ header p {
 .soft-card {
   border: 1px solid rgb(226 232 240 / 0.82);
   border-radius: 22px;
-  background: rgb(255 255 255 / 0.72);
+  background: rgb(255 255 255);
   box-shadow: 0 18px 45px rgb(15 23 42 / 0.06);
 }
 
 .dark .soft-card {
   border-color: rgb(51 65 85 / 0.82);
-  background: rgb(15 23 42 / 0.62);
+  background: rgb(15 23 42);
   box-shadow: 0 18px 45px rgb(0 0 0 / 0.24);
 }
 
@@ -73,13 +73,13 @@ header p {
   align-items: center;
   gap: 12px;
   border-radius: 16px;
-  background: rgb(255 255 255 / 0.64);
+  background: rgb(248 250 252);
   padding: 0 12px;
   box-shadow: 0 10px 24px rgb(15 23 42 / 0.04);
 }
 
 .dark .soft-row {
-  background: rgb(30 41 59 / 0.66);
+  background: rgb(30 41 59);
 }
 
 .soft-start {
@@ -88,14 +88,14 @@ header p {
   align-items: center;
   gap: 12px;
   border-radius: 18px;
-  background: rgb(255 255 255 / 0.66);
+  background: rgb(248 250 252);
   padding: 16px;
   text-align: left;
   box-shadow: 0 10px 24px rgb(15 23 42 / 0.04);
 }
 
 .dark .soft-start {
-  background: rgb(30 41 59 / 0.66);
+  background: rgb(30 41 59);
 }
 
 .field {
@@ -129,13 +129,15 @@ header p {
 
 .window-controls {
   height: 32px;
+  gap: 6px;
 }
 
 .window-control {
   display: grid;
-  width: 46px;
+  width: 34px;
   height: 32px;
   place-items: center;
+  border-radius: 12px;
   color: inherit;
   transition:
     background-color 160ms ease,
@@ -143,13 +145,14 @@ header p {
 }
 
 .window-control:hover {
-  background: rgb(255 255 255 / 0.72);
-  color: rgb(15 23 42);
+  background: rgb(255 255 255);
+  color: rgb(14 165 233);
+  box-shadow: 0 8px 20px rgb(15 23 42 / 0.08);
 }
 
 .dark .window-control:hover {
-  background: rgb(255 255 255 / 0.12);
-  color: white;
+  background: rgb(15 23 42);
+  color: rgb(125 211 252);
 }
 
 .window-control-close:hover,

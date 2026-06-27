@@ -20,6 +20,7 @@ public sealed class MainForm : Form
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const int HtClient = 1;
+    private const int HtCaption = 2;
     private const int HtLeft = 10;
     private const int HtRight = 11;
     private const int HtTop = 12;
@@ -452,6 +453,7 @@ public sealed class MainForm : Form
             "workspace.list" => await HandleWorkspaceListAsync(message),
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
+            "window.dragStart" => HandleWindowDragStart(message),
             "window.close" => HandleWindowClose(message),
             "window.theme" => HandleWindowTheme(message),
             _ => new BridgeResponse(message.RequestId, false, null, "CapabilityNotSupported", "未知 OneDesk 桥接请求")
@@ -505,7 +507,13 @@ public sealed class MainForm : Form
 
     private BridgeResponse HandleWindowMaximize(BridgeMessage message)
     {
-        ToggleMaximize();
+        var maximized = ToggleMaximize();
+        return new BridgeResponse(message.RequestId, true, maximized);
+    }
+
+    private BridgeResponse HandleWindowDragStart(BridgeMessage message)
+    {
+        BeginNativeWindowDrag();
         return new BridgeResponse(message.RequestId, true, null);
     }
 
@@ -520,7 +528,7 @@ public sealed class MainForm : Form
         var theme = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : "light";
         var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
         var color = dark ? Color.Black : Color.FromArgb(248, 252, 255);
-        Opacity = dark ? 0.96d : 1d;
+        Opacity = 1d;
         BackColor = color;
         foreach (var handle in _resizeHandles)
         {
@@ -531,18 +539,30 @@ public sealed class MainForm : Form
         return new BridgeResponse(message.RequestId, true, null);
     }
 
-    private void ToggleMaximize()
+    private bool ToggleMaximize()
     {
         if (WindowState == FormWindowState.Maximized)
         {
             WindowState = FormWindowState.Normal;
             ApplyRoundedWindow();
-            return;
+            return false;
         }
 
         MaximizedBounds = Screen.FromHandle(Handle).WorkingArea;
         Region = null;
         WindowState = FormWindowState.Maximized;
+        return true;
+    }
+
+    private void BeginNativeWindowDrag()
+    {
+        if (WindowState == FormWindowState.Maximized)
+        {
+            return;
+        }
+
+        ReleaseCapture();
+        SendMessage(Handle, WmNcLButtonDown, HtCaption, 0);
     }
 
     private void RemoveLoadingSurface()
@@ -709,6 +729,9 @@ public sealed class MainForm : Form
     },
     maximizeWindow() {
       return send('window.maximize');
+    },
+    startWindowDrag() {
+      return send('window.dragStart');
     },
     closeWindow() {
       return send('window.close');

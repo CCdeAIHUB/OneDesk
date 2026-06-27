@@ -16,7 +16,6 @@ export const navItems: NavigationItem[] = [
   { key: "scheme", label: "方案", icon: "solar:play-circle-bold-duotone" },
   { key: "plugin", label: "插件", icon: "solar:plug-circle-bold-duotone" },
   { key: "permission", label: "设置", icon: "solar:settings-bold-duotone" },
-  { key: "log", label: "账户", icon: "solar:user-rounded-bold-duotone" },
 ];
 
 export const workspace = reactive({

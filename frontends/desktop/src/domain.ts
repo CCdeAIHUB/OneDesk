@@ -1,4 +1,4 @@
-export type ViewKey = "home" | "component" | "page" | "scheme" | "plugin" | "permission" | "log";
+export type ViewKey = "home" | "component" | "page" | "scheme" | "plugin" | "permission";
 export type ThemeMode = "light" | "dark" | "system";
 export type SectionRoute = "manager" | "editor";
 

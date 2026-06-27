@@ -2,7 +2,7 @@
 import { Icon } from "@iconify/vue";
 import { computed, onMounted, ref } from "vue";
 import type { SectionRoute, ThemeMode, ViewKey } from "./domain";
-import { closeWindow, maximizeWindow, minimizeWindow, setShellTheme } from "./nativeBridge";
+import { closeWindow, maximizeWindow, minimizeWindow, setShellTheme, startWindowDrag } from "./nativeBridge";
 import { components, logs, navItems, pages, permissions, quickActions, quickStart, schemes, workspace } from "./workspace";
 
 const activeView = ref<ViewKey>("home");
@@ -15,6 +15,7 @@ const showPermissionDialog = ref(false);
 const showCodeSwitchDialog = ref(false);
 const exporting = ref(false);
 const exportProgress = ref(0);
+const isMaximized = ref(false);
 
 const viewTitle = computed(() => navItems.find((item) => item.key === activeView.value)?.label ?? "首页");
 
@@ -38,6 +39,27 @@ function setTheme(next: ThemeMode) {
 
 onMounted(() => setTheme(theme.value));
 
+async function toggleMaximize() {
+  isMaximized.value = await maximizeWindow();
+}
+
+function handleWindowDrag(event: PointerEvent) {
+  if (event.button !== 0 || isMaximized.value) {
+    return;
+  }
+
+  const target = event.target instanceof Element ? event.target : null;
+  if (
+    target?.closest(
+      "button,input,select,textarea,a,nav,.soft-card,.soft-row,.soft-start,.theme-dot,.window-controls,.no-drag",
+    )
+  ) {
+    return;
+  }
+
+  void startWindowDrag();
+}
+
 function startExport() {
   exporting.value = true;
   exportProgress.value = 12;
@@ -56,10 +78,10 @@ function startExport() {
 </script>
 
 <template>
-  <main class="h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100">
+  <main class="h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100" @pointerdown="handleWindowDrag">
     <section class="app-shell flex h-full min-h-[720px] min-w-[1120px] overflow-hidden">
       <aside class="flex w-[96px] shrink-0 items-start justify-center py-9">
-        <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white/78 px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950/56">
+        <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950">
           <button
             v-for="item in navItems"
             :key="item.key"
@@ -85,7 +107,7 @@ function startExport() {
               <button class="grid size-8 shrink-0 place-items-center rounded-full text-slate-500 dark:text-slate-300" title="主题">
                 <Icon :icon="theme === 'dark' ? 'solar:moon-bold-duotone' : theme === 'light' ? 'solar:sun-2-bold-duotone' : 'solar:monitor-bold-duotone'" class="size-4" />
               </button>
-              <div class="absolute left-1/2 top-0 z-20 flex h-8 w-8 -translate-x-1/2 flex-col items-center gap-1 overflow-hidden rounded-full bg-white/92 p-1 opacity-0 shadow-lg shadow-slate-950/10 transition-all duration-200 group-hover:h-[88px] group-hover:opacity-100 dark:bg-slate-950/92">
+              <div class="absolute left-1/2 top-0 z-20 flex h-8 w-8 -translate-x-1/2 flex-col items-center gap-1 overflow-hidden rounded-full bg-white p-1 opacity-0 shadow-lg shadow-slate-950/10 transition-all duration-200 group-hover:h-[88px] group-hover:opacity-100 dark:bg-slate-950">
                 <button class="theme-dot" :class="theme === 'light' ? 'theme-dot-active' : ''" title="浅色" @click="setTheme('light')">
                   <Icon icon="solar:sun-2-bold-duotone" class="size-4" />
                 </button>
@@ -102,8 +124,8 @@ function startExport() {
               <button class="window-control" title="最小化" @click="minimizeWindow">
                 <span class="win-symbol">&#xE921;</span>
               </button>
-              <button class="window-control" title="最大化" @click="maximizeWindow">
-                <span class="win-symbol">&#xE922;</span>
+              <button class="window-control" :title="isMaximized ? '还原' : '最大化'" @click="toggleMaximize">
+                <span class="win-symbol" v-html="isMaximized ? '&#xE923;' : '&#xE922;'"></span>
               </button>
               <button class="window-control window-control-close" title="关闭" @click="closeWindow">
                 <span class="win-symbol">&#xE8BB;</span>

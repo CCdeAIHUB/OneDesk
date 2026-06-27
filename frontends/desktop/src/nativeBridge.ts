@@ -18,6 +18,7 @@ declare global {
       getDeviceId?: () => string | Promise<string>;
       minimizeWindow?: () => string | Promise<string>;
       maximizeWindow?: () => string | Promise<string>;
+      startWindowDrag?: () => string | Promise<string>;
       closeWindow?: () => string | Promise<string>;
       setShellTheme?: (theme: "light" | "dark") => string | Promise<string>;
     };
@@ -53,8 +54,13 @@ export async function minimizeWindow(): Promise<void> {
   await window.OneDeskNative?.minimizeWindow?.();
 }
 
-export async function maximizeWindow(): Promise<void> {
-  await window.OneDeskNative?.maximizeWindow?.();
+export async function maximizeWindow(): Promise<boolean> {
+  const raw = await window.OneDeskNative?.maximizeWindow?.();
+  return raw ? Boolean((JSON.parse(raw) as NativeBridgeResponse<boolean>).payload) : false;
+}
+
+export async function startWindowDrag(): Promise<void> {
+  await window.OneDeskNative?.startWindowDrag?.();
 }
 
 export async function closeWindow(): Promise<void> {
