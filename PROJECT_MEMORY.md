@@ -164,6 +164,9 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Requested permissions are granted by default in the dialog, but the user can adjust authorization before confirming.
 - High-risk permissions must be clearly marked.
 - Users can later modify component and plugin permissions in settings, including adding or removing granted permissions.
+- High-risk permissions are defined by OneDesk.
+- High-risk permissions should include at least file deletion/modification outside plugin/component private storage, process control, memory read/write, keyboard/mouse simulation, network access, clipboard read/write, camera, microphone, screen capture/recording, persistent background execution, credential/keychain access, shell command execution, and cross-device sensitive JSAPI access.
+- Code-edited components and externally imported Vue component projects must include a manifest declaring requested permissions.
 
 ## Components
 
@@ -189,6 +192,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - The preview window supports configurable preview ratios such as 1:1, 2:3, and 4:6.
 - Components support import and export as compressed packages.
 - Component import must show the standard permission dialog before installation/import completion.
+- Component packages must include a manifest declaring identity, version, editing mode compatibility, requested permissions, entry files, and visual-editor configuration presence if applicable.
 - Import must support Vue 3 component projects edited by external editors.
 - If an imported package is a valid visual-editor project and has no validation errors, it can continue to use visual editing.
 - If an imported package is a plain Vue 3 component project or a project that has entered code editing, it cannot enter visual editing.
@@ -236,6 +240,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Backend plugin communication protocol: JSON-RPC.
 - Plugin packages should be self-contained by default.
 - Plugin install/import must show the standard permission dialog before installation/import completion.
+- Online plugin marketplace is not required.
 
 ## Trigger Priority
 
