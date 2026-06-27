@@ -450,6 +450,7 @@ public sealed class MainForm : Form
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
             "window.close" => HandleWindowClose(message),
+            "window.theme" => HandleWindowTheme(message),
             _ => new BridgeResponse(message.RequestId, false, null, "CapabilityNotSupported", "未知 OneDesk 桥接请求")
         };
 
@@ -508,6 +509,20 @@ public sealed class MainForm : Form
     private BridgeResponse HandleWindowClose(BridgeMessage message)
     {
         Close();
+        return new BridgeResponse(message.RequestId, true, null);
+    }
+
+    private BridgeResponse HandleWindowTheme(BridgeMessage message)
+    {
+        var theme = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : "light";
+        var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
+        var color = dark ? Color.FromArgb(30, 41, 59) : Color.FromArgb(248, 252, 255);
+        BackColor = color;
+        foreach (var handle in _resizeHandles)
+        {
+            handle.BackColor = color;
+        }
+
         return new BridgeResponse(message.RequestId, true, null);
     }
 
@@ -585,6 +600,9 @@ public sealed class MainForm : Form
     },
     closeWindow() {
       return send('window.close');
+    },
+    setShellTheme(theme) {
+      return send('window.theme', { payload: theme });
     }
   };
 

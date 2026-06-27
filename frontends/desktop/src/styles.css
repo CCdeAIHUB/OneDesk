@@ -37,6 +37,19 @@ textarea {
   box-sizing: border-box;
 }
 
+.app-shell {
+  background:
+    linear-gradient(135deg, rgb(255 255 255 / 0.58), rgb(240 249 255 / 0.42)),
+    rgb(255 255 255 / 0.24);
+  backdrop-filter: blur(26px) saturate(1.18);
+}
+
+.dark .app-shell {
+  background:
+    linear-gradient(135deg, rgb(15 23 42 / 0.56), rgb(30 41 59 / 0.38)),
+    rgb(15 23 42 / 0.26);
+}
+
 header p {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -104,6 +117,7 @@ header p {
   display: grid;
   width: 24px;
   height: 24px;
+  flex: 0 0 24px;
   place-items: center;
   border-radius: 999px;
   color: rgb(100 116 139);

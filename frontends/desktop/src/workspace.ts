@@ -14,7 +14,7 @@ export const navItems: NavigationItem[] = [
   { key: "component", label: "组件", icon: "solar:card-bold-duotone" },
   { key: "page", label: "页面", icon: "solar:layers-bold-duotone" },
   { key: "scheme", label: "方案", icon: "solar:play-square-bold-duotone" },
-  { key: "plugin", label: "插件", icon: "solar:puzzle-bold-duotone" },
+  { key: "plugin", label: "插件", icon: "solar:plug-circle-bold-duotone" },
   { key: "permission", label: "设置", icon: "solar:settings-bold-duotone" },
   { key: "log", label: "账户", icon: "solar:user-rounded-bold-duotone" },
 ];
@@ -36,7 +36,7 @@ export const quickActions: QuickAction[] = [
 
 export const quickStart: QuickStartItem[] = [
   { label: "连接新设备", desc: "连接并设置新的控制设备", icon: "solar:usb-bold-duotone", color: "text-sky-500" },
-  { label: "浏览插件", desc: "扩展你的 OneDesk 能力", icon: "solar:puzzle-bold-duotone", color: "text-green-500" },
+  { label: "浏览插件", desc: "扩展你的 OneDesk 能力", icon: "solar:plug-circle-bold-duotone", color: "text-green-500" },
   { label: "使用帮助", desc: "查看使用文档和教程", icon: "solar:question-circle-bold-duotone", color: "text-violet-500" },
 ];
 

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { Icon } from "@iconify/vue";
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { SectionRoute, ThemeMode, ViewKey } from "./domain";
-import { closeWindow, maximizeWindow, minimizeWindow } from "./nativeBridge";
+import { closeWindow, maximizeWindow, minimizeWindow, setShellTheme } from "./nativeBridge";
 import { components, logs, navItems, pages, permissions, quickActions, quickStart, schemes, workspace } from "./workspace";
 
 const activeView = ref<ViewKey>("home");
@@ -29,7 +29,10 @@ function setTheme(next: ThemeMode) {
   theme.value = next;
   const resolved = next === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : next;
   document.documentElement.classList.toggle("dark", resolved === "dark");
+  void setShellTheme(resolved);
 }
+
+onMounted(() => setTheme(theme.value));
 
 function startExport() {
   exporting.value = true;
@@ -50,9 +53,9 @@ function startExport() {
 
 <template>
   <main class="h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100">
-    <section class="flex h-full min-h-[720px] min-w-[1120px] overflow-hidden bg-white/72 backdrop-blur-2xl dark:bg-slate-950/76">
-      <aside class="flex w-[96px] shrink-0 items-start justify-center bg-white/54 py-9 dark:bg-slate-950/24">
-        <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white/92 px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-900/78">
+    <section class="app-shell flex h-full min-h-[720px] min-w-[1120px] overflow-hidden">
+      <aside class="flex w-[96px] shrink-0 items-start justify-center py-9">
+        <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white/78 px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950/56">
           <button
             v-for="item in navItems"
             :key="item.key"
@@ -74,16 +77,11 @@ function startExport() {
           </div>
 
           <div class="flex min-w-0 flex-1 items-center justify-end gap-3">
-            <label class="flex h-9 w-[300px] shrink items-center gap-2 rounded-full bg-white/82 px-4 text-[12px] text-slate-400 shadow-sm dark:bg-slate-900/72 dark:text-slate-500">
-              <Icon icon="solar:magnifer-bold-duotone" class="size-4" />
-              <input class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400" placeholder="搜索（设备、方案、动作等）" />
-            </label>
-
-            <div class="group flex h-8 w-8 items-center justify-end overflow-hidden rounded-full transition-all duration-200 hover:w-[116px] hover:bg-white/92 hover:px-1.5 hover:shadow-lg hover:shadow-slate-950/10 dark:hover:bg-slate-900/92">
+            <div class="group relative flex size-8 items-start justify-center overflow-visible rounded-full">
               <button class="grid size-8 shrink-0 place-items-center rounded-full text-slate-500 dark:text-slate-300" title="主题">
                 <Icon :icon="theme === 'dark' ? 'solar:moon-bold-duotone' : theme === 'light' ? 'solar:sun-2-bold-duotone' : 'solar:monitor-bold-duotone'" class="size-4" />
               </button>
-              <div class="flex w-0 items-center gap-1 overflow-hidden opacity-0 transition-all duration-200 group-hover:w-[78px] group-hover:opacity-100">
+              <div class="absolute left-1/2 top-0 z-20 flex h-8 w-8 -translate-x-1/2 flex-col items-center gap-1 overflow-hidden rounded-full bg-white/92 p-1 opacity-0 shadow-lg shadow-slate-950/10 transition-all duration-200 group-hover:h-[88px] group-hover:opacity-100 dark:bg-slate-950/92">
                 <button class="theme-dot" :class="theme === 'light' ? 'theme-dot-active' : ''" title="浅色" @click="setTheme('light')">
                   <Icon icon="solar:sun-2-bold-duotone" class="size-4" />
                 </button>
@@ -98,7 +96,7 @@ function startExport() {
 
             <div class="ml-2 flex items-center gap-1 text-slate-500 dark:text-slate-300">
               <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最小化" @click="minimizeWindow">
-                <Icon icon="fluent:minimize-16-regular" class="size-4" />
+                <Icon icon="fluent:arrow-minimize-16-regular" class="size-4" />
               </button>
               <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最大化" @click="maximizeWindow">
                 <Icon icon="fluent:maximize-16-regular" class="size-4" />

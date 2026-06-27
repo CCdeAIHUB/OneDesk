@@ -19,6 +19,7 @@ declare global {
       minimizeWindow?: () => string | Promise<string>;
       maximizeWindow?: () => string | Promise<string>;
       closeWindow?: () => string | Promise<string>;
+      setShellTheme?: (theme: "light" | "dark") => string | Promise<string>;
     };
   }
 }
@@ -58,4 +59,8 @@ export async function maximizeWindow(): Promise<void> {
 
 export async function closeWindow(): Promise<void> {
   await window.OneDeskNative?.closeWindow?.();
+}
+
+export async function setShellTheme(theme: "light" | "dark"): Promise<void> {
+  await window.OneDeskNative?.setShellTheme?.(theme);
 }
