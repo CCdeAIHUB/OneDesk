@@ -41,6 +41,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 
 - Technology stack:
   - C#
+  - .NET 10 LTS, currently the latest stable .NET line confirmed from Microsoft official downloads/support pages on 2026-06-27. Re-check official Microsoft .NET pages before scaffolding if time has passed.
   - Chromium kernel
   - Vue 3 frontend
 - Framework direction:
@@ -74,6 +75,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 ## Repository Structure
 
 - Use a monorepo structure.
+- Use `pnpm` for frontend/package workspace management.
 - Planned top-level structure:
   - `apps/desktop`
   - `apps/mobile/android`
@@ -90,6 +92,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - All network communication must be forwarded through native shells.
 - Desktop and mobile communicate using QUIC over UDP.
 - QUIC implementation choice: MsQuic.
+- Protocol definitions should use schema-driven definitions that can generate or synchronize types for C#, Kotlin, Swift, and TypeScript.
 
 ## Pairing Direction
 
@@ -104,6 +107,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 ## Open Questions
 
 - Confirm desktop Chromium integration package after prototype validation.
+- Confirm exact protocol schema technology.
 - Confirm CI matrix and release artifact strategy.
 - User will describe desktop action capability boundaries later.
 - User will describe plugin system requirements later.
