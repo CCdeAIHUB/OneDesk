@@ -1,5 +1,7 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,19 +14,34 @@ namespace OneDesk.Windows;
 
 public sealed class MainForm : Form
 {
+    private static readonly Size InitialWindowSize = new(1200, 780);
+    private const int ResizeGripSize = 8;
+    private const int CornerRadius = 22;
+    private const uint SwpNoZOrder = 0x0004;
+    private const uint SwpNoActivate = 0x0010;
+    private const int HtClient = 1;
+    private const int HtLeft = 10;
+    private const int HtRight = 11;
+    private const int HtTop = 12;
+    private const int HtTopLeft = 13;
+    private const int HtTopRight = 14;
+    private const int HtBottom = 15;
+    private const int HtBottomLeft = 16;
+    private const int HtBottomRight = 17;
     private WebView2? _browser;
     private ServiceProvider? _services;
     private DeviceRegistry? _devices;
     private JsApiRouter? _jsApiRouter;
     private OneDeskRepository? _repository;
+    private readonly List<Control> _resizeHandles = [];
 
     public MainForm()
     {
         AppDiagnostics.Write("MainForm constructor entered.");
         Text = "OneDesk";
         StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(1180, 760);
-        MinimumSize = new Size(980, 640);
+        Size = InitialWindowSize;
+        MinimumSize = new Size(1120, 720);
         BackColor = Color.FromArgb(248, 252, 255);
         FormBorderStyle = FormBorderStyle.None;
         DoubleBuffered = true;
@@ -39,14 +56,177 @@ public sealed class MainForm : Form
         };
         Controls.Add(loadingLabel);
         AppDiagnostics.Write("Loading surface created.");
+        CreateResizeHandles();
 
         Shown += async (_, _) =>
         {
             AppDiagnostics.Write("MainForm shown.");
+            EnsureInitialWindowBounds();
+            ApplyRoundedWindow();
             await InitializeServicesAsync();
             await InitializeChromiumAsync();
         };
     }
+
+    private void EnsureInitialWindowBounds()
+    {
+        var workingArea = Screen.FromControl(this).WorkingArea;
+        var width = Math.Min(InitialWindowSize.Width, workingArea.Width - 48);
+        var height = Math.Min(InitialWindowSize.Height, workingArea.Height - 48);
+        width = Math.Max(width, MinimumSize.Width);
+        height = Math.Max(height, MinimumSize.Height);
+        var left = workingArea.Left + (workingArea.Width - width) / 2;
+        var top = workingArea.Top + (workingArea.Height - height) / 2;
+        SetWindowPos(Handle, nint.Zero, left, top, width, height, SwpNoZOrder | SwpNoActivate);
+        AppDiagnostics.Write($"Initial window bounds applied: {width}x{height} at {left},{top}.");
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        ApplyRoundedWindow();
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        const int wmNcHitTest = 0x0084;
+        if (m.Msg == wmNcHitTest)
+        {
+            base.WndProc(ref m);
+            if ((int)m.Result == HtClient)
+            {
+                var screenPoint = new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
+                var point = PointToClient(screenPoint);
+                m.Result = HitTestResizeBorder(point);
+                return;
+            }
+
+            return;
+        }
+
+        base.WndProc(ref m);
+    }
+
+    private nint HitTestResizeBorder(Point point)
+    {
+        var left = point.X <= ResizeGripSize;
+        var right = point.X >= ClientSize.Width - ResizeGripSize;
+        var top = point.Y <= ResizeGripSize;
+        var bottom = point.Y >= ClientSize.Height - ResizeGripSize;
+
+        return (top, bottom, left, right) switch
+        {
+            (true, false, true, false) => HtTopLeft,
+            (true, false, false, true) => HtTopRight,
+            (false, true, true, false) => HtBottomLeft,
+            (false, true, false, true) => HtBottomRight,
+            (true, false, false, false) => HtTop,
+            (false, true, false, false) => HtBottom,
+            (false, false, true, false) => HtLeft,
+            (false, false, false, true) => HtRight,
+            _ => HtClient
+        };
+    }
+
+    private void CreateResizeHandles()
+    {
+        AddResizeHandle(DockStyle.Top, Cursors.SizeNS, HtTop);
+        AddResizeHandle(DockStyle.Bottom, Cursors.SizeNS, HtBottom);
+        AddResizeHandle(DockStyle.Left, Cursors.SizeWE, HtLeft);
+        AddResizeHandle(DockStyle.Right, Cursors.SizeWE, HtRight);
+        AddCornerResizeHandle(AnchorStyles.Top | AnchorStyles.Left, Cursors.SizeNWSE, HtTopLeft);
+        AddCornerResizeHandle(AnchorStyles.Top | AnchorStyles.Right, Cursors.SizeNESW, HtTopRight);
+        AddCornerResizeHandle(AnchorStyles.Bottom | AnchorStyles.Left, Cursors.SizeNESW, HtBottomLeft);
+        AddCornerResizeHandle(AnchorStyles.Bottom | AnchorStyles.Right, Cursors.SizeNWSE, HtBottomRight);
+        BringResizeHandlesToFront();
+    }
+
+    private void AddResizeHandle(DockStyle dock, Cursor cursor, int hitTest)
+    {
+        var panel = new Panel
+        {
+            Dock = dock,
+            Width = ResizeGripSize,
+            Height = ResizeGripSize,
+            BackColor = Color.Transparent,
+            Cursor = cursor
+        };
+        panel.MouseDown += (_, e) => BeginNativeResize(e, hitTest);
+        Controls.Add(panel);
+        _resizeHandles.Add(panel);
+    }
+
+    private void AddCornerResizeHandle(AnchorStyles anchor, Cursor cursor, int hitTest)
+    {
+        var panel = new Panel
+        {
+            Size = new Size(ResizeGripSize * 2, ResizeGripSize * 2),
+            Anchor = anchor,
+            BackColor = Color.Transparent,
+            Cursor = cursor
+        };
+        PositionCornerHandle(panel, anchor);
+        panel.MouseDown += (_, e) => BeginNativeResize(e, hitTest);
+        SizeChanged += (_, _) => PositionCornerHandle(panel, anchor);
+        Controls.Add(panel);
+        _resizeHandles.Add(panel);
+    }
+
+    private void PositionCornerHandle(Control panel, AnchorStyles anchor)
+    {
+        var x = anchor.HasFlag(AnchorStyles.Right) ? ClientSize.Width - panel.Width : 0;
+        var y = anchor.HasFlag(AnchorStyles.Bottom) ? ClientSize.Height - panel.Height : 0;
+        panel.Location = new Point(Math.Max(0, x), Math.Max(0, y));
+    }
+
+    private void BringResizeHandlesToFront()
+    {
+        foreach (var handle in _resizeHandles)
+        {
+            handle.BringToFront();
+        }
+    }
+
+    private void BeginNativeResize(MouseEventArgs e, int hitTest)
+    {
+        if (e.Button != MouseButtons.Left)
+        {
+            return;
+        }
+
+        ReleaseCapture();
+        SendMessage(Handle, WmNcLButtonDown, hitTest, 0);
+    }
+
+    private void ApplyRoundedWindow()
+    {
+        if (WindowState == FormWindowState.Maximized)
+        {
+            Region = null;
+            return;
+        }
+
+        using var path = new GraphicsPath();
+        var bounds = new Rectangle(0, 0, Width, Height);
+        var diameter = CornerRadius * 2;
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        Region = new Region(path);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    private static extern nint SendMessage(nint hWnd, int message, int wParam, int lParam);
+
+    private const int WmNcLButtonDown = 0x00A1;
 
     private async Task InitializeServicesAsync()
     {
@@ -98,10 +278,14 @@ public sealed class MainForm : Form
             };
             Controls.Add(_browser);
             _browser.BringToFront();
+            BringResizeHandlesToFront();
             AppDiagnostics.Write("WebView2 control created.");
 
             await _browser.EnsureCoreWebView2Async();
             AppDiagnostics.Write("WebView2 initialized.");
+            var zoomFactor = Math.Clamp(96d / DeviceDpi, 0.5d, 1d);
+            _browser.ZoomFactor = zoomFactor;
+            AppDiagnostics.Write($"WebView2 zoom factor applied: {zoomFactor:0.###}; DeviceDpi={DeviceDpi}.");
             _browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _browser.CoreWebView2.Settings.AreDevToolsEnabled = true;
             _browser.CoreWebView2.Settings.IsStatusBarEnabled = false;

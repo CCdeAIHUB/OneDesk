@@ -50,7 +50,7 @@ function startExport() {
 
 <template>
   <main class="h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100">
-    <section class="flex h-full overflow-hidden bg-white/72 backdrop-blur-2xl dark:bg-slate-950/76">
+    <section class="flex h-full min-h-[720px] min-w-[1120px] overflow-hidden bg-white/72 backdrop-blur-2xl dark:bg-slate-950/76">
       <aside class="flex w-[96px] shrink-0 items-start justify-center bg-white/54 py-9 dark:bg-slate-950/24">
         <nav class="flex w-[54px] flex-col items-center gap-4 rounded-[28px] bg-white/92 px-2 py-4 shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-900/78">
           <button
@@ -67,14 +67,14 @@ function startExport() {
       </aside>
 
       <section class="flex min-w-0 flex-1 flex-col px-8 py-6">
-        <header class="flex h-11 shrink-0 items-center justify-between">
-          <div class="min-w-0">
+        <header class="flex h-11 shrink-0 items-center justify-between gap-5">
+          <div class="w-[300px] shrink-0 overflow-hidden">
             <h1 class="truncate text-[20px] font-semibold leading-6">你好，OneDesk！</h1>
             <p class="mt-1 text-[12px] text-slate-500 dark:text-slate-400">欢迎回来，今天也要高效控制每一个瞬间</p>
           </div>
 
-          <div class="flex items-center gap-3">
-            <label class="flex h-9 w-[300px] items-center gap-2 rounded-full bg-white/82 px-4 text-[12px] text-slate-400 shadow-sm dark:bg-slate-900/72 dark:text-slate-500">
+          <div class="flex min-w-0 flex-1 items-center justify-end gap-3">
+            <label class="flex h-9 w-[300px] shrink items-center gap-2 rounded-full bg-white/82 px-4 text-[12px] text-slate-400 shadow-sm dark:bg-slate-900/72 dark:text-slate-500">
               <Icon icon="solar:magnifer-bold-duotone" class="size-4" />
               <input class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-400" placeholder="搜索（设备、方案、动作等）" />
             </label>

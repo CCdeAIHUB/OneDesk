@@ -16,7 +16,7 @@
 
 body {
   margin: 0;
-  min-width: 1024px;
+  min-width: 1120px;
   min-height: 720px;
   overflow: hidden;
   background: transparent;
@@ -35,6 +35,12 @@ textarea {
 
 * {
   box-sizing: border-box;
+}
+
+header p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .soft-card {
