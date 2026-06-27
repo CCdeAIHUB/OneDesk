@@ -2,6 +2,7 @@
 import { Icon } from "@iconify/vue";
 import { computed, ref } from "vue";
 import type { SectionRoute, ThemeMode, ViewKey } from "./domain";
+import { closeWindow, maximizeWindow, minimizeWindow } from "./nativeBridge";
 import { components, logs, navItems, pages, permissions, quickActions, quickStart, schemes, workspace } from "./workspace";
 
 const activeView = ref<ViewKey>("home");
@@ -96,13 +97,13 @@ function startExport() {
             </div>
 
             <div class="ml-2 flex items-center gap-1 text-slate-500 dark:text-slate-300">
-              <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最小化">
+              <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最小化" @click="minimizeWindow">
                 <Icon icon="fluent:minimize-16-regular" class="size-4" />
               </button>
-              <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最大化">
+              <button class="grid size-8 place-items-center rounded-full hover:bg-white/80 dark:hover:bg-slate-900" title="最大化" @click="maximizeWindow">
                 <Icon icon="fluent:maximize-16-regular" class="size-4" />
               </button>
-              <button class="grid size-8 place-items-center rounded-full hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/60" title="关闭">
+              <button class="grid size-8 place-items-center rounded-full hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/60" title="关闭" @click="closeWindow">
                 <Icon icon="fluent:dismiss-16-regular" class="size-4" />
               </button>
             </div>

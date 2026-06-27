@@ -16,6 +16,9 @@ declare global {
     OneDeskNative?: {
       callJsApi?: (targetDeviceId: string, capability: string, payloadJson: string) => string | Promise<string>;
       getDeviceId?: () => string | Promise<string>;
+      minimizeWindow?: () => string | Promise<string>;
+      maximizeWindow?: () => string | Promise<string>;
+      closeWindow?: () => string | Promise<string>;
     };
   }
 }
@@ -43,4 +46,16 @@ export async function getLocalDeviceId(): Promise<string> {
   }
 
   return await window.OneDeskNative.getDeviceId();
+}
+
+export async function minimizeWindow(): Promise<void> {
+  await window.OneDeskNative?.minimizeWindow?.();
+}
+
+export async function maximizeWindow(): Promise<void> {
+  await window.OneDeskNative?.maximizeWindow?.();
+}
+
+export async function closeWindow(): Promise<void> {
+  await window.OneDeskNative?.closeWindow?.();
 }
