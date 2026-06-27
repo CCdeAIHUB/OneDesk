@@ -35,7 +35,6 @@ public sealed class MainForm : Form
     private JsApiRouter? _jsApiRouter;
     private OneDeskRepository? _repository;
     private Label? _loadingLabel;
-    private readonly List<Control> _resizeHandles = [];
 
     public MainForm()
     {
@@ -59,7 +58,6 @@ public sealed class MainForm : Form
         };
         Controls.Add(_loadingLabel);
         AppDiagnostics.Write("Loading surface created.");
-        CreateResizeHandles();
 
         Shown += async (_, _) =>
         {
@@ -129,76 +127,6 @@ public sealed class MainForm : Form
             (false, false, false, true) => HtRight,
             _ => HtClient
         };
-    }
-
-    private void CreateResizeHandles()
-    {
-        AddResizeHandle(DockStyle.Top, Cursors.SizeNS, HtTop);
-        AddResizeHandle(DockStyle.Bottom, Cursors.SizeNS, HtBottom);
-        AddResizeHandle(DockStyle.Left, Cursors.SizeWE, HtLeft);
-        AddResizeHandle(DockStyle.Right, Cursors.SizeWE, HtRight);
-        AddCornerResizeHandle(AnchorStyles.Top | AnchorStyles.Left, Cursors.SizeNWSE, HtTopLeft);
-        AddCornerResizeHandle(AnchorStyles.Top | AnchorStyles.Right, Cursors.SizeNESW, HtTopRight);
-        AddCornerResizeHandle(AnchorStyles.Bottom | AnchorStyles.Left, Cursors.SizeNESW, HtBottomLeft);
-        AddCornerResizeHandle(AnchorStyles.Bottom | AnchorStyles.Right, Cursors.SizeNWSE, HtBottomRight);
-        BringResizeHandlesToFront();
-    }
-
-    private void AddResizeHandle(DockStyle dock, Cursor cursor, int hitTest)
-    {
-        var panel = new Panel
-        {
-            Dock = dock,
-            Width = ResizeGripSize,
-            Height = ResizeGripSize,
-            BackColor = Color.Transparent,
-            Cursor = cursor
-        };
-        panel.MouseDown += (_, e) => BeginNativeResize(e, hitTest);
-        Controls.Add(panel);
-        _resizeHandles.Add(panel);
-    }
-
-    private void AddCornerResizeHandle(AnchorStyles anchor, Cursor cursor, int hitTest)
-    {
-        var panel = new Panel
-        {
-            Size = new Size(ResizeGripSize * 2, ResizeGripSize * 2),
-            Anchor = anchor,
-            BackColor = Color.Transparent,
-            Cursor = cursor
-        };
-        PositionCornerHandle(panel, anchor);
-        panel.MouseDown += (_, e) => BeginNativeResize(e, hitTest);
-        SizeChanged += (_, _) => PositionCornerHandle(panel, anchor);
-        Controls.Add(panel);
-        _resizeHandles.Add(panel);
-    }
-
-    private void PositionCornerHandle(Control panel, AnchorStyles anchor)
-    {
-        var x = anchor.HasFlag(AnchorStyles.Right) ? ClientSize.Width - panel.Width : 0;
-        var y = anchor.HasFlag(AnchorStyles.Bottom) ? ClientSize.Height - panel.Height : 0;
-        panel.Location = new Point(Math.Max(0, x), Math.Max(0, y));
-    }
-
-    private void BringResizeHandlesToFront()
-    {
-        foreach (var handle in _resizeHandles)
-        {
-            handle.BringToFront();
-        }
-    }
-
-    private void BeginNativeResize(MouseEventArgs e, int hitTest)
-    {
-        if (e.Button != MouseButtons.Left)
-        {
-            return;
-        }
-
-        ReleaseCapture();
-        SendMessage(Handle, WmNcLButtonDown, hitTest, 0);
     }
 
     private void ApplyRoundedWindow()
@@ -283,7 +211,6 @@ public sealed class MainForm : Form
             };
             Controls.Add(_browser);
             _browser.BringToFront();
-            BringResizeHandlesToFront();
             RemoveLoadingSurface();
             AppDiagnostics.Write("WebView2 control created.");
 
@@ -531,10 +458,6 @@ public sealed class MainForm : Form
         var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
         Opacity = 1d;
         BackColor = TransparentShellColor;
-        foreach (var handle in _resizeHandles)
-        {
-            handle.BackColor = TransparentShellColor;
-        }
 
         ApplyDwmTheme(dark);
         ApplyRoundedWindow();
