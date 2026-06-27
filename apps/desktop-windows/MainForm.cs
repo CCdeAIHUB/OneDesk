@@ -106,6 +106,7 @@ public sealed class MainForm : Form
             _browser.CoreWebView2.Settings.AreDevToolsEnabled = true;
             _browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
             _browser.CoreWebView2.WebMessageReceived += Browser_OnWebMessageReceived;
+            _browser.CoreWebView2.NavigationCompleted += Browser_OnNavigationCompleted;
             _browser.CoreWebView2.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             _browser.CoreWebView2.WebResourceRequested += Browser_OnWebResourceRequested;
 
@@ -132,10 +133,96 @@ public sealed class MainForm : Form
         }
     }
 
+    private async void Browser_OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        AppDiagnostics.Write($"Navigation completed. Success={e.IsSuccess}; WebError={e.WebErrorStatus}; Uri={_browser?.Source}");
+        if (!e.IsSuccess || _browser?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        await Task.Delay(1000);
+        var state = await _browser.CoreWebView2.ExecuteScriptAsync("""
+(() => JSON.stringify({
+  bodyText: document.body.innerText.slice(0, 80),
+  htmlLength: document.documentElement.outerHTML.length,
+  appChildren: document.getElementById('app')?.children.length ?? -1,
+  scripts: [...document.scripts].map(script => script.src || script.textContent?.slice(0, 30)),
+  styles: [...document.styleSheets].length
+}))()
+""");
+        AppDiagnostics.Write($"DOM state: {state}");
+        if (state.Contains("\\\"appChildren\\\":0", StringComparison.Ordinal))
+        {
+            await ExecuteBundledFrontendScriptsAsync();
+            await Task.Delay(500);
+            var injectedState = await _browser.CoreWebView2.ExecuteScriptAsync("""
+(() => JSON.stringify({
+  bodyText: document.body.innerText.slice(0, 80),
+  htmlLength: document.documentElement.outerHTML.length,
+  appChildren: document.getElementById('app')?.children.length ?? -1
+}))()
+""");
+            AppDiagnostics.Write($"DOM state after script injection: {injectedState}");
+        }
+    }
+
+    private async Task ExecuteBundledFrontendScriptsAsync()
+    {
+        if (_browser?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        var assetsDirectory = Path.Combine(AppContext.BaseDirectory, "wwwroot", "assets");
+        if (!Directory.Exists(assetsDirectory))
+        {
+            AppDiagnostics.Write($"Assets directory does not exist: {assetsDirectory}");
+            return;
+        }
+
+        foreach (var scriptPath in Directory.EnumerateFiles(assetsDirectory, "*.js").OrderBy(Path.GetFileName))
+        {
+            AppDiagnostics.Write($"Executing bundled frontend script: {scriptPath}");
+            var script = await File.ReadAllTextAsync(scriptPath);
+            await _browser.CoreWebView2.ExecuteScriptAsync(script);
+        }
+    }
+
     private void Browser_OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
         if (!Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri))
         {
+            return;
+        }
+
+        if (uri.Scheme == "file" && (uri.AbsolutePath.EndsWith(".js", StringComparison.OrdinalIgnoreCase) || uri.AbsolutePath.EndsWith(".css", StringComparison.OrdinalIgnoreCase)))
+        {
+            AppDiagnostics.Write($"Local resource requested: {uri}");
+            if (_browser?.CoreWebView2 is null)
+            {
+                return;
+            }
+
+            var localPath = uri.LocalPath;
+            if (!File.Exists(localPath))
+            {
+                return;
+            }
+
+            var extension = Path.GetExtension(localPath).ToLowerInvariant();
+            var contentType = extension switch
+            {
+                ".js" => "application/javascript; charset=utf-8",
+                ".css" => "text/css; charset=utf-8",
+                _ => "application/octet-stream"
+            };
+            var stream = new MemoryStream(File.ReadAllBytes(localPath));
+            e.Response = _browser.CoreWebView2.Environment.CreateWebResourceResponse(
+                stream,
+                200,
+                "OK",
+                $"Content-Type: {contentType}\r\nCache-Control: no-store");
             return;
         }
 
@@ -157,6 +244,14 @@ public sealed class MainForm : Form
 
     private async void Browser_OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        using var document = JsonDocument.Parse(e.WebMessageAsJson);
+        if (document.RootElement.TryGetProperty("type", out var typeElement) &&
+            typeElement.GetString() == "diagnostic.error")
+        {
+            AppDiagnostics.Write($"Frontend error: {e.WebMessageAsJson}");
+            return;
+        }
+
         var message = JsonSerializer.Deserialize<BridgeMessage>(e.WebMessageAsJson, JsonOptions);
         if (message is null)
         {
@@ -241,6 +336,31 @@ public sealed class MainForm : Form
 
     private const string NativeBridgeScript = """
 (() => {
+  window.addEventListener('error', event => {
+    window.chrome.webview.postMessage({
+      type: 'diagnostic.error',
+      requestId: 'diagnostic-error',
+      message: event.message,
+      payload: {
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        error: event.error ? String(event.error.stack || event.error.message || event.error) : null
+      }
+    });
+  });
+
+  window.addEventListener('unhandledrejection', event => {
+    window.chrome.webview.postMessage({
+      type: 'diagnostic.error',
+      requestId: 'diagnostic-rejection',
+      message: 'Unhandled promise rejection',
+      payload: {
+        reason: String(event.reason?.stack || event.reason?.message || event.reason)
+      }
+    });
+  });
+
   const pending = new Map();
   window.chrome.webview.addEventListener('message', event => {
     const message = event.data;
