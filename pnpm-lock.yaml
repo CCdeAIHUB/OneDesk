@@ -44,6 +44,9 @@ importers:
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      tailwindcss:
+        specifier: latest
+        version: 4.3.1
       vue:
         specifier: latest
         version: 3.5.39(typescript@6.0.3)

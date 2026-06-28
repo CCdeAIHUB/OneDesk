@@ -61,7 +61,12 @@ export const quickStart: QuickStartItem[] = [
   { label: "使用帮助", desc: "查看使用文档和教程", icon: "solar:question-circle-bold-duotone", color: "text-violet-500" },
 ];
 
-export async function loadWorkspace(): Promise<void> {
+export async function loadWorkspace(options?: {
+  preserveSelection?: boolean;
+  selectedComponentId?: string;
+  selectedPageId?: string;
+  selectedSchemeId?: string;
+}): Promise<void> {
   workspace.loading = true;
   try {
     const [workspaceResponse, capabilityResponse, logResponse, permissionResponse, deviceResponse, gatewayResponse, cacheResponse, pluginResponse] = await Promise.all([
@@ -82,9 +87,18 @@ export async function loadWorkspace(): Promise<void> {
       workspace.schemes = workspaceResponse.payload.schemes;
       workspace.devices = workspaceResponse.payload.devices.filter((device) => String(device.kind).toLowerCase() !== "desktop" && !device.deviceId.startsWith("desktop-"));
       workspace.activeSchemeId = workspaceResponse.payload.activeScheme?.schemeId ?? "";
-      workspace.selectedComponentId = workspace.components[0]?.id ?? "";
-      workspace.selectedPageId = workspace.pages[0]?.id ?? "";
-      workspace.selectedSchemeId = workspace.schemes[0]?.id ?? "";
+      const nextComponentId = options?.selectedComponentId ?? workspace.selectedComponentId;
+      const nextPageId = options?.selectedPageId ?? workspace.selectedPageId;
+      const nextSchemeId = options?.selectedSchemeId ?? workspace.selectedSchemeId;
+      workspace.selectedComponentId = options?.preserveSelection && workspace.components.some((item) => item.id === nextComponentId)
+        ? nextComponentId
+        : workspace.components[0]?.id ?? "";
+      workspace.selectedPageId = options?.preserveSelection && workspace.pages.some((item) => item.id === nextPageId)
+        ? nextPageId
+        : workspace.pages[0]?.id ?? "";
+      workspace.selectedSchemeId = options?.preserveSelection && workspace.schemes.some((item) => item.id === nextSchemeId)
+        ? nextSchemeId
+        : workspace.schemes[0]?.id ?? "";
       workspace.selectedDevice = workspace.devices[0]?.displayName ?? "未选择移动设备";
     } else {
       applyPreviewData();

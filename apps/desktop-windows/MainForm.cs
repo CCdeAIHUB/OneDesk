@@ -23,7 +23,7 @@ public sealed class MainForm : Form
     private static readonly Size InitialWindowSize = new(1200, 780);
     private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
     private const int ResizeGripSize = 14;
-    private const int CornerRadius = 24;
+    private const int CornerRadius = 0;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
     private const int HtClient = 1;
@@ -36,10 +36,30 @@ public sealed class MainForm : Form
     private const int HtBottom = 15;
     private const int HtBottomLeft = 16;
     private const int HtBottomRight = 17;
+    private bool _allowExit;
+    private bool _isDarkTheme;
+    private const int WmNcCalcSize = 0x0083;
     private const int WmNcHitTest = 0x0084;
+    private const int WmNcPaint = 0x0085;
+    private const int WmNcActivate = 0x0086;
+    private const int WmSetCursor = 0x0020;
     private const int WmNcLButtonDown = 0x00A1;
     private const int WmSysCommand = 0x0112;
     private const int ScMove = 0xF010;
+    private const int WsCaption = 0x00C00000;
+    private const int WsThickFrame = 0x00040000;
+    private const int WsMinimizeBox = 0x00020000;
+    private const int WsMaximizeBox = 0x00010000;
+    private const int WsSysMenu = 0x00080000;
+    private const int IdcSizenwse = 32642;
+    private const int IdcSizenesw = 32643;
+    private const int IdcSizewe = 32644;
+    private const int IdcSizens = 32645;
+    private const int DwmwaNcRenderingPolicy = 2;
+    private const int DwmncrpDisabled = 2;
+    private const int WcaAccentPolicy = 19;
+    private const int AccentEnableBlurBehind = 3;
+    private const int AccentEnableAcrylicBlurBehind = 4;
     private WebView2? _browser;
     private ServiceProvider? _services;
     private DeviceRegistry? _devices;
@@ -67,6 +87,7 @@ public sealed class MainForm : Form
         TransparencyKey = TransparentShellColor;
         FormBorderStyle = FormBorderStyle.None;
         DoubleBuffered = true;
+        SetStyle(ControlStyles.ResizeRedraw, true);
 
         _loadingLabel = new Label
         {
@@ -83,10 +104,24 @@ public sealed class MainForm : Form
         {
             AppDiagnostics.Write("MainForm shown.");
             EnsureInitialWindowBounds();
+            ApplyDwmTheme(false);
             ApplyRoundedWindow();
+            EnsureTrayIcon();
             await InitializeServicesAsync();
             await InitializeChromiumAsync();
         };
+        FormClosing += MainForm_FormClosing;
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var createParams = base.CreateParams;
+            createParams.Style &= ~WsCaption;
+            createParams.Style |= WsThickFrame;
+            return createParams;
+        }
     }
 
     private void EnsureInitialWindowBounds()
@@ -105,11 +140,66 @@ public sealed class MainForm : Form
     protected override void OnSizeChanged(EventArgs e)
     {
         base.OnSizeChanged(e);
-        ApplyRoundedWindow();
+        LayoutBrowser();
+        Invalidate();
+    }
+
+    private void LayoutBrowser()
+    {
+        if (_browser is null)
+        {
+            return;
+        }
+
+        _browser.Bounds = new Rectangle(1, 1, Math.Max(0, ClientSize.Width - 2), Math.Max(0, ClientSize.Height - 2));
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        base.OnPaint(e);
+        var color = _isDarkTheme ? Color.FromArgb(51, 65, 85) : Color.FromArgb(148, 163, 184);
+        using var pen = new Pen(color, 1);
+        var rect = ClientRectangle;
+        e.Graphics.DrawRectangle(pen, 0, 0, rect.Width - 1, rect.Height - 1);
     }
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == WmNcPaint || m.Msg == WmNcActivate)
+        {
+            m.Result = (nint)1;
+            return;
+        }
+
+        if (m.Msg == WmSetCursor && m.WParam == Handle)
+        {
+            var hitTest = (int)(m.LParam.ToInt64() & 0xFFFF);
+            var cursorId = hitTest switch
+            {
+                HtLeft or HtRight => IdcSizewe,
+                HtTop or HtBottom => IdcSizens,
+                HtTopLeft or HtBottomRight => IdcSizenwse,
+                HtTopRight or HtBottomLeft => IdcSizenesw,
+                _ => 0
+            };
+            if (cursorId != 0)
+            {
+                var hCursor = LoadCursor(nint.Zero, cursorId);
+                if (hCursor != nint.Zero)
+                {
+                    SetCursor(hCursor);
+                    m.Result = (nint)1;
+                    return;
+                }
+            }
+        }
+
+        if (m.Msg == WmNcCalcSize && m.WParam != nint.Zero)
+        {
+            m.Result = nint.Zero;
+            return;
+        }
+
         if (m.Msg == WmNcHitTest)
         {
             var screenPoint = new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF));
@@ -148,16 +238,18 @@ public sealed class MainForm : Form
 
     private void ApplyRoundedWindow()
     {
-        if (WindowState == FormWindowState.Maximized)
+        NotifyFrontendWindowRadius();
+    }
+
+    private void NotifyFrontendWindowRadius()
+    {
+        if (_browser?.CoreWebView2 is null)
         {
-            Region = null;
             return;
         }
 
-        var diameter = CornerRadius * 2;
-        var regionHandle = CreateRoundRectRgn(0, 0, ClientSize.Width + 1, ClientSize.Height + 1, diameter, diameter);
-        Region = Region.FromHrgn(regionHandle);
-        DeleteObject(regionHandle);
+        _ = _browser.CoreWebView2.ExecuteScriptAsync(
+            "document.documentElement.style.setProperty('--onedesk-window-radius', '0px')");
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -169,11 +261,11 @@ public sealed class MainForm : Form
     [DllImport("user32.dll")]
     private static extern nint SendMessage(nint hWnd, int message, int wParam, int lParam);
 
-    [DllImport("gdi32.dll")]
-    private static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom, int widthEllipse, int heightEllipse);
+    [DllImport("user32.dll")]
+    private static extern nint LoadCursor(nint hInstance, int lpCursorName);
 
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(nint hObject);
+    [DllImport("user32.dll")]
+    private static extern bool SetCursor(nint hCursor);
 
     private async Task InitializeServicesAsync()
     {
@@ -217,6 +309,10 @@ public sealed class MainForm : Form
         if (disposing)
         {
             _loadingLabel?.Dispose();
+            if (_notifyIcon is not null)
+            {
+                _notifyIcon.Visible = false;
+            }
             _notifyIcon?.Dispose();
             _browser?.Dispose();
             _services?.Dispose();
@@ -232,11 +328,12 @@ public sealed class MainForm : Form
             AppDiagnostics.Write("Chromium initialization entered.");
             _browser = new WebView2
             {
-                Dock = DockStyle.Fill,
                 DefaultBackgroundColor = Color.Transparent
             };
             Controls.Add(_browser);
             _browser.BringToFront();
+            LayoutBrowser();
+            ApplyRoundedWindow();
             RemoveLoadingSurface();
             AppDiagnostics.Write("WebView2 control created.");
 
@@ -283,6 +380,8 @@ public sealed class MainForm : Form
         {
             return;
         }
+
+        NotifyFrontendWindowRadius();
 
         await Task.Delay(1000);
         var state = await _browser.CoreWebView2.ExecuteScriptAsync("""
@@ -505,13 +604,74 @@ public sealed class MainForm : Form
     {
         var title = ReadJsonString(payload, "title", "OneDesk");
         var message = ReadJsonString(payload, "message", "OneDesk 通知");
-        _notifyIcon ??= new NotifyIcon
+        EnsureTrayIcon();
+        _notifyIcon?.ShowBalloonTip(4000, title, message, ToolTipIcon.Info);
+    }
+
+    private void EnsureTrayIcon()
+    {
+        if (_notifyIcon is not null)
         {
-            Icon = Icon,
+            _notifyIcon.Visible = true;
+            return;
+        }
+
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("显示程序", null, (_, _) => ShowMainWindow());
+        menu.Items.Add("退出程序", null, (_, _) => ConfirmExitFromTray());
+
+        _notifyIcon = new NotifyIcon
+        {
+            Icon = Icon ?? SystemIcons.Application,
             Visible = true,
-            Text = "OneDesk"
+            Text = "OneDesk",
+            ContextMenuStrip = menu
         };
-        _notifyIcon.ShowBalloonTip(4000, title, message, ToolTipIcon.Info);
+        _notifyIcon.DoubleClick += (_, _) => ShowMainWindow();
+    }
+
+    private void ShowMainWindow()
+    {
+        Show();
+        ShowInTaskbar = true;
+        WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    private void HideToTray()
+    {
+        EnsureTrayIcon();
+        Hide();
+        ShowInTaskbar = false;
+    }
+
+    private void ConfirmExitFromTray()
+    {
+        var result = MessageBox.Show(
+            "是否退出 OneDesk 程序？",
+            "退出程序",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question);
+
+        if (result != DialogResult.Yes)
+        {
+            return;
+        }
+
+        _allowExit = true;
+        _notifyIcon!.Visible = false;
+        Close();
+    }
+
+    private void MainForm_FormClosing(object? sender, FormClosingEventArgs e)
+    {
+        if (_allowExit)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        HideToTray();
     }
 
     private async Task<BridgeResponse> HandleWorkspaceListAsync(BridgeMessage message)
@@ -1409,8 +1569,10 @@ public sealed class MainForm : Form
 
         if (hitTest != HtClient)
         {
+            SuspendBlurForDrag();
             ReleaseCapture();
             SendMessage(Handle, WmNcLButtonDown, hitTest, 0);
+            ResumeBlurAfterDrag();
         }
 
         return new BridgeResponse(message.RequestId, hitTest != HtClient, hitTest != HtClient);
@@ -1418,7 +1580,7 @@ public sealed class MainForm : Form
 
     private BridgeResponse HandleWindowClose(BridgeMessage message)
     {
-        Close();
+        HideToTray();
         return new BridgeResponse(message.RequestId, true, null);
     }
 
@@ -1451,8 +1613,48 @@ public sealed class MainForm : Form
 
     private void BeginNativeWindowDrag()
     {
+        SuspendBlurForDrag();
         ReleaseCapture();
         SendMessage(Handle, WmNcLButtonDown, HtCaption, 0);
+        ResumeBlurAfterDrag();
+    }
+
+    private void SuspendBlurForDrag()
+    {
+        SetBlurEnabled(false);
+    }
+
+    private void ResumeBlurAfterDrag()
+    {
+        SetBlurEnabled(true);
+    }
+
+    private void SetBlurEnabled(bool enabled)
+    {
+        var gradient = _isDarkTheme ? unchecked((int)0x800F172A) : unchecked((int)0x80F1F5F9);
+        var accent = new AccentPolicy
+        {
+            AccentState = enabled ? AccentEnableAcrylicBlurBehind : 0,
+            AccentFlags = 0,
+            GradientColor = gradient,
+        };
+        var accentSize = Marshal.SizeOf(accent);
+        var accentPtr = Marshal.AllocHGlobal(accentSize);
+        try
+        {
+            Marshal.StructureToPtr(accent, accentPtr, false);
+            var data = new WindowCompositionAttributeData
+            {
+                Attribute = WcaAccentPolicy,
+                Data = accentPtr,
+                SizeOfData = accentSize,
+            };
+            SetWindowCompositionAttribute(Handle, ref data);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(accentPtr);
+        }
     }
 
     private void RemoveLoadingSurface()
@@ -1470,6 +1672,9 @@ public sealed class MainForm : Form
 
     private void ApplyDwmTheme(bool dark)
     {
+        _isDarkTheme = dark;
+        Invalidate();
+
         if (!OperatingSystem.IsWindowsVersionAtLeast(10))
         {
             return;
@@ -1480,19 +1685,20 @@ public sealed class MainForm : Form
             var darkMode = dark ? 1 : 0;
             _ = DwmSetWindowAttribute(Handle, DwmwaUseImmersiveDarkMode, ref darkMode, sizeof(int));
 
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
-            {
-                var cornerPreference = DwmWindowCornerPreferenceRound;
-                _ = DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref cornerPreference, sizeof(int));
-
-                var backdropType = DwmSystemBackdropAcrylic;
-                _ = DwmSetWindowAttribute(Handle, DwmwaSystemBackdropType, ref backdropType, sizeof(int));
-            }
+            var ncPolicy = DwmncrpDisabled;
+            _ = DwmSetWindowAttribute(Handle, DwmwaNcRenderingPolicy, ref ncPolicy, sizeof(int));
         }
         catch
         {
             // DWM dark-mode support varies by Windows build; WebView remains usable without it.
         }
+
+        ApplyBlurBehind();
+    }
+
+    private void ApplyBlurBehind()
+    {
+        SetBlurEnabled(true);
     }
 
     private static T? DeserializePayload<T>(BridgeMessage message)
@@ -1574,13 +1780,29 @@ public sealed class MainForm : Form
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private const int DwmwaUseImmersiveDarkMode = 20;
-    private const int DwmwaWindowCornerPreference = 33;
-    private const int DwmwaSystemBackdropType = 38;
-    private const int DwmWindowCornerPreferenceRound = 2;
-    private const int DwmSystemBackdropAcrylic = 3;
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+    [DllImport("user32.dll")]
+    private static extern int SetWindowCompositionAttribute(nint hwnd, ref WindowCompositionAttributeData data);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowCompositionAttributeData
+    {
+        public int Attribute;
+        public nint Data;
+        public int SizeOfData;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AccentPolicy
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public int GradientColor;
+        public int AnimationId;
+    }
 
     private const string NativeBridgeScript = """
 (() => {

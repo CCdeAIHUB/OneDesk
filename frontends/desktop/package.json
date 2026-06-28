@@ -15,6 +15,7 @@
     "@onedesk/protocol": "workspace:*",
     "@tailwindcss/vite": "latest",
     "qrcode": "^1.5.4",
+    "tailwindcss": "latest",
     "vue": "latest"
   },
   "devDependencies": {

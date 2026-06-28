@@ -3,6 +3,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
+  --onedesk-window-radius: 0px;
   color-scheme: light;
   font-family:
     "Microsoft YaHei UI", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans CJK SC",
@@ -16,10 +17,18 @@
 
 body {
   margin: 0;
+  width: 100vw;
+  height: 100vh;
   min-width: 1120px;
   min-height: 720px;
   overflow: hidden;
   background: transparent;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .dark body {
@@ -38,11 +47,18 @@ textarea {
 }
 
 .app-shell {
-  border-radius: 0;
-  overflow: visible;
+  border-radius: var(--onedesk-window-radius, 0px);
+  overflow: hidden;
   background-color: rgb(255 255 255 / 0.74);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+body:has(.window-maximized),
+body:has(.window-maximized) #app,
+.window-maximized,
+.window-maximized .app-shell {
+  border-radius: 0;
 }
 
 .dark .app-shell {
@@ -64,14 +80,14 @@ textarea {
 }
 
 ::-webkit-scrollbar {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
 }
 
 ::-webkit-scrollbar-button {
-  display: none;
-  width: 0;
-  height: 0;
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 ::-webkit-scrollbar-track {
@@ -79,7 +95,7 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 5px solid transparent;
+  border: 7px solid transparent;
   border-radius: 999px;
   background: rgb(14 165 233 / 0.5);
   background-clip: padding-box;
@@ -144,6 +160,13 @@ header p {
     transform 160ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease;
+}
+
+.scrollable {
+  scrollbar-gutter: stable both-edges;
+  overscroll-behavior: contain;
+  padding-right: 12px;
+  padding-bottom: 12px;
 }
 
 .manager-card:hover {
@@ -368,6 +391,82 @@ select.field {
   gap: 5px;
 }
 
+.editor-back-button,
+.header-surface-button,
+.header-primary-button,
+.header-device-button,
+.editor-title-input {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.editor-back-button,
+.header-surface-button,
+.header-device-button,
+.editor-title-input {
+  border: 1px solid rgb(226 232 240 / 0.92);
+  background: rgb(255 255 255);
+  box-shadow: 0 12px 28px rgb(15 23 42 / 0.08);
+}
+
+.editor-back-button {
+  width: 36px;
+  justify-content: center;
+  color: rgb(2 132 199);
+}
+
+.editor-title-input {
+  width: min(340px, 100%);
+  padding: 0 16px;
+}
+
+.header-surface-button,
+.header-primary-button {
+  padding: 0 16px;
+}
+
+.header-surface-button {
+  color: rgb(2 132 199);
+}
+
+.header-primary-button {
+  background: rgb(14 165 233);
+  color: white;
+  box-shadow: 0 12px 28px rgb(14 165 233 / 0.28);
+}
+
+.header-device-button {
+  max-width: 220px;
+  gap: 8px;
+  padding: 0 14px;
+  color: rgb(71 85 105);
+}
+
+.dark .editor-back-button,
+.dark .header-surface-button,
+.dark .header-device-button,
+.dark .editor-title-input {
+  border-color: rgb(51 65 85 / 0.9);
+  background: rgb(19 31 50);
+  color: rgb(226 232 240);
+  box-shadow: 0 14px 30px rgb(0 0 0 / 0.28);
+}
+
+.dark .header-surface-button,
+.dark .editor-back-button {
+  color: rgb(125 211 252);
+}
+
+.dark .header-primary-button {
+  background: rgb(14 165 233);
+  color: white;
+  box-shadow: 0 12px 28px rgb(14 165 233 / 0.32);
+}
+
 .settings-layout,
 .plugin-layout {
   display: grid;
@@ -495,6 +594,61 @@ select.field {
 .editor-nav-active {
   background: rgb(14 165 233);
   color: white;
+}
+
+.editor-section-card {
+  border-radius: 20px;
+  background: rgb(255 255 255);
+  padding: 16px;
+  box-shadow: 0 10px 26px rgb(15 23 42 / 0.06);
+}
+
+.dark .editor-section-card {
+  background: rgb(15 23 42);
+  box-shadow: none;
+}
+
+.editor-section-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.editor-section-head h3 {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.editor-section-head p {
+  font-size: 12px;
+  color: rgb(100 116 139);
+}
+
+.dark .editor-section-head p {
+  color: rgb(148 163 184);
+}
+
+.editor-section-head-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.editor-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scheme-settings > .field,
+.scheme-settings > div {
+  border-radius: 20px;
+  background: rgb(248 250 252);
+  padding: 14px;
+}
+
+.dark .scheme-settings > .field,
+.dark .scheme-settings > div {
+  background: rgb(15 23 42);
 }
 
 .file-row,
