@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Icon } from "@iconify/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import QRCode from "qrcode";
 import type { ActionDefinition, ComponentDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
@@ -38,6 +38,9 @@ const selectedCellId = ref("");
 const pendingDelete = ref<{ kind: "component" | "page" | "scheme" | "plugin" | "action"; id: string; name: string } | null>(null);
 const enableStartup = ref(false);
 const connectionPort = ref(48320);
+const toasts = ref<Array<{ id: number; message: string }>>([]);
+const draggingSchemePageIndex = ref<number | null>(null);
+let toastSequence = 0;
 
 const selectedComponent = computed(() => workspace.components.find((item) => item.id === workspace.selectedComponentId) ?? workspace.components[0]);
 const selectedPage = computed(() => workspace.pages.find((item) => item.id === workspace.selectedPageId) ?? workspace.pages[0]);
@@ -66,6 +69,13 @@ const componentCodeFiles = computed(() => [
 ]);
 const selectedCell = computed(() => selectedPage.value?.cells.find((cell) => cell.id === selectedCellId.value) ?? selectedPage.value?.cells[0] ?? null);
 const selectedComponentActions = computed(() => workspace.actions.filter((action) => selectedComponent.value?.actionIds.includes(action.id)));
+const schemeFlowNodes = computed(() => (selectedScheme.value?.pageIds ?? []).map((pageId, index) => ({
+  pageId,
+  index,
+  page: workspace.pages.find((page) => page.id === pageId),
+  x: 14 + (index % 3) * 34,
+  y: 18 + Math.floor(index / 3) * 30,
+})));
 const isEditorView = computed(() =>
   (activeView.value === "component" && componentRoute.value === "editor") ||
   (activeView.value === "page" && pageRoute.value === "editor") ||
@@ -90,6 +100,19 @@ onMounted(async () => {
   if (!selectedDeviceId.value && trustedDevices.value[0]) selectedDeviceId.value = trustedDevices.value[0].deviceId;
   if (!selectedPluginId.value && workspace.plugins[0]) selectedPluginId.value = workspace.plugins[0].id;
 });
+
+watch(() => workspace.toast, (message) => {
+  if (!message || workspace.loading) return;
+  pushToast(message);
+});
+
+function pushToast(message: string) {
+  const id = ++toastSequence;
+  toasts.value = [...toasts.value, { id, message }].slice(-4);
+  window.setTimeout(() => {
+    toasts.value = toasts.value.filter((toast) => toast.id !== id);
+  }, 3200);
+}
 
 function navIcon(item: (typeof navItems)[number]) {
   return activeView.value === item.key ? item.icon.replace("-bold-duotone", "-bold") : item.icon;
@@ -242,8 +265,20 @@ async function createComponent() {
     requestedPermissions: [],
     pluginDependencies: [],
   };
+  workspace.toast = "正在创建组件...";
   const response = await sendShell<ComponentDefinition>("workspace.saveComponent", component);
-  workspace.toast = response.ok ? "组件已创建" : response.message ?? "组件创建失败";
+  if (!response.ok) {
+    workspace.toast = response.message ?? "组件创建失败";
+    return;
+  }
+  workspace.components = [component, ...workspace.components.filter((item) => item.id !== id)];
+  workspace.selectedComponentId = id;
+  activeView.value = "component";
+  componentRoute.value = "editor";
+  componentEditorMode.value = "visual";
+  componentCodeDraft.value = generatedComponentCode(component);
+  hydrateCodeFiles(component);
+  workspace.toast = "组件已创建";
   await loadWorkspace();
   workspace.selectedComponentId = id;
   componentEditorMode.value = "visual";
@@ -483,6 +518,19 @@ function handleAddSchemePage(event: Event) {
   if (!select) return;
   addPageToScheme(select.value);
   select.value = "";
+}
+
+function beginSchemePageDrag(index: number) {
+  draggingSchemePageIndex.value = index;
+}
+
+function dropSchemePage(targetIndex: number) {
+  if (!selectedScheme.value || draggingSchemePageIndex.value === null) return;
+  const pages = [...selectedScheme.value.pageIds];
+  const [pageId] = pages.splice(draggingSchemePageIndex.value, 1);
+  pages.splice(targetIndex, 0, pageId);
+  selectedScheme.value.pageIds = pages;
+  draggingSchemePageIndex.value = null;
 }
 
 function addSchemeEdge() {
@@ -746,7 +794,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               </div>
               <div v-else class="overflow-hidden rounded-[18px] bg-slate-950"><div class="flex h-9 items-center border-b border-slate-800 px-4 text-[12px] text-slate-400">{{ selectedCodeFile }}</div><textarea v-model="componentCodeDraft" class="scrollable h-[390px] w-full resize-none overflow-auto bg-slate-950 p-4 font-mono text-[12px] leading-6 text-sky-100 outline-none" data-no-window-drag spellcheck="false"></textarea></div>
             </section>
-            <aside class="soft-card p-4"><div class="flex items-center justify-between gap-3"><h3 class="text-[13px] font-semibold">实时预览</h3><label class="field-label w-[92px]">比例<input v-model="previewRatio" class="field h-8 text-center" placeholder="1:1" /></label></div><div class="mt-4 grid overflow-hidden rounded-[22px] bg-gradient-to-br from-sky-400 to-cyan-300 text-white shadow-lg shadow-sky-500/18" :style="previewAspectStyle"><div class="grid place-items-center text-center"><div><Icon icon="solar:bolt-circle-bold-duotone" class="mx-auto size-10" /><p class="mt-2 text-[13px] font-semibold">{{ selectedComponent?.name }}</p></div></div></div><div class="mt-4 grid gap-2 text-[12px] text-slate-500"><p>预览比例：{{ previewRatio || '1:1' }}</p><p>溢出策略：隐藏</p><p>权限：{{ selectedComponent?.requestedPermissions.length }} 项</p></div></aside>
+            <aside class="soft-card min-w-0 p-4"><div class="flex items-start justify-between gap-3"><h3 class="min-w-0 text-[13px] font-semibold">实时预览</h3><label class="field-label ratio-field">比例<input v-model="previewRatio" class="field h-8 px-2 text-center" placeholder="1:1" /></label></div><div class="mt-4 grid overflow-hidden rounded-[22px] bg-gradient-to-br from-sky-400 to-cyan-300 text-white shadow-lg shadow-sky-500/18" :style="previewAspectStyle"><div class="grid place-items-center text-center"><div><Icon icon="solar:bolt-circle-bold-duotone" class="mx-auto size-10" /><p class="mt-2 text-[13px] font-semibold">{{ selectedComponent?.name }}</p></div></div></div><div class="mt-4 grid gap-2 text-[12px] text-slate-500"><p>预览比例：{{ previewRatio || '1:1' }}</p><p>溢出策略：隐藏</p><p>权限：{{ selectedComponent?.requestedPermissions.length }} 项</p></div></aside>
           </section>
 
           <section v-else-if="activeView === 'page' && pageRoute === 'manager'" class="scrollable h-full overflow-auto" data-no-window-drag>
@@ -766,13 +814,13 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
 
           <section v-else-if="activeView === 'scheme'" class="soft-card h-full p-5">
             <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="schemeRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回方案管理</button><p class="text-[12px] text-slate-500">保存、应用、导出已移动到顶部设备入口左侧</p></div>
-            <div class="grid h-[calc(100%-42px)] grid-cols-[280px_1fr] gap-5"><aside class="scrollable overflow-auto rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag><input v-if="selectedScheme" v-model="selectedScheme.name" class="field w-full text-[15px] font-semibold" placeholder="方案名称" /><select class="field mt-4 w-full text-[12px]" @change="handleAddSchemePage"><option value="">添加页面到方案</option><option v-for="page in workspace.pages.filter((page) => !selectedScheme?.pageIds.includes(page.id))" :key="page.id" :value="page.id">{{ page.name }}</option></select><div class="mt-4 grid gap-2 text-[12px]"><div v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><div class="font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</div><div class="mt-2 flex gap-1"><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, -1)">上移</button><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, 1)">下移</button><button class="card-action danger h-7 flex-1" @click="removePageFromScheme(pageId)">删除</button></div></div></div><div class="mt-4 grid gap-2 text-[12px]"><h3 class="text-[13px] font-semibold">全局切换</h3><select v-if="selectedScheme" v-model="selectedScheme.globalPrevious.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select><select v-if="selectedScheme" v-model="selectedScheme.globalNext.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select></div><div class="mt-4 grid gap-2 text-[12px]"><div class="flex items-center justify-between"><h3 class="text-[13px] font-semibold">页面跳转边</h3><button class="text-sky-600" @click="addSchemeEdge">新增边</button></div><div v-for="(edge, index) in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}-${index}`" class="grid gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800"><select v-model="edge.fromPageId" class="field"><option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option></select><select v-model="edge.toPageId" class="field"><option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option></select><input v-model="edge.trigger.displayName" class="field" /><select v-model="edge.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select><button class="card-action danger" @click="removeSchemeEdge(index)">删除边</button></div></div></aside><div class="rounded-[22px] bg-white p-5 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">页面流程</h3><div class="mt-5 flex items-center gap-3 overflow-auto pb-2" data-no-window-drag><template v-for="(pageId, index) in selectedScheme?.pageIds" :key="pageId"><div class="min-w-[132px] rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700"><Icon icon="solar:smartphone-bold-duotone" class="mx-auto size-8 text-sky-500" /><p class="mt-2 text-[13px] font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</p></div><div v-if="index < (selectedScheme?.pageIds.length ?? 0) - 1" class="min-w-[96px] text-center text-[11px] text-slate-500"><Icon icon="solar:alt-arrow-right-linear" class="mx-auto size-5" /><p>{{ selectedScheme?.globalNext.trigger.displayName }}</p><p>{{ selectedScheme?.globalNext.animation }}</p></div></template></div><div class="mt-5 grid gap-2 text-[12px] text-slate-500"><p>全局上一页：{{ selectedScheme?.globalPrevious.trigger.displayName }} / {{ selectedScheme?.globalPrevious.animation }}</p><p>全局下一页：{{ selectedScheme?.globalNext.trigger.displayName }} / {{ selectedScheme?.globalNext.animation }}</p><p v-for="edge in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}`">{{ edge.fromPageId }} -> {{ edge.toPageId }}：{{ edge.trigger.displayName }} / {{ edge.animation }}</p></div></div></div>
+            <div class="grid h-[calc(100%-42px)] grid-cols-[300px_1fr] gap-5"><aside class="soft-card scrollable overflow-auto p-4" data-no-window-drag><select class="field mt-1 text-[12px]" @change="handleAddSchemePage"><option value="">添加页面到方案</option><option v-for="page in workspace.pages.filter((page) => !selectedScheme?.pageIds.includes(page.id))" :key="page.id" :value="page.id">{{ page.name }}</option></select><div class="mt-4 grid gap-2 text-[12px]"><div v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><div class="font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</div><div class="mt-2 flex gap-1"><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, -1)">上移</button><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, 1)">下移</button><button class="card-action danger h-7 flex-1" @click="removePageFromScheme(pageId)">删除</button></div></div></div><div class="mt-4 grid gap-2 text-[12px]"><h3 class="text-[13px] font-semibold">全局切换</h3><label class="field-label">上一页动画<select v-if="selectedScheme" v-model="selectedScheme.globalPrevious.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select></label><label class="field-label">下一页动画<select v-if="selectedScheme" v-model="selectedScheme.globalNext.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select></label></div><div class="mt-4 grid gap-2 text-[12px]"><div class="flex items-center justify-between"><h3 class="text-[13px] font-semibold">页面跳转边</h3><button class="text-sky-600" @click="addSchemeEdge">新增边</button></div><div v-for="(edge, index) in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}-${index}`" class="grid gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800"><select v-model="edge.fromPageId" class="field"><option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option></select><select v-model="edge.toPageId" class="field"><option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option></select><input v-model="edge.trigger.displayName" class="field" /><select v-model="edge.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select><button class="card-action danger" @click="removeSchemeEdge(index)">删除边</button></div></div></aside><div class="soft-card p-5"><div class="mb-4 flex items-center justify-between"><h3 class="text-[13px] font-semibold">页面流程图</h3><p class="text-[11px] text-slate-500">拖拽节点可调整页面顺序</p></div><div class="scheme-flow-canvas" data-no-window-drag><svg class="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><marker id="flow-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#0ea5e9" /></marker></defs><line v-for="(node, index) in schemeFlowNodes.slice(0, -1)" :key="`${node.pageId}-line`" :x1="node.x + 12" :y1="node.y + 6" :x2="schemeFlowNodes[index + 1].x" :y2="schemeFlowNodes[index + 1].y + 6" stroke="#0ea5e9" stroke-width="0.7" marker-end="url(#flow-arrow)" /></svg><button v-for="node in schemeFlowNodes" :key="node.pageId" draggable="true" class="scheme-flow-node rounded-2xl border border-sky-300 bg-white p-3 text-left shadow-lg shadow-sky-950/8 dark:border-sky-800 dark:bg-slate-900" :style="{ left: `${node.x}%`, top: `${node.y}%` }" @dragstart="beginSchemePageDrag(node.index)" @dragover.prevent @drop="dropSchemePage(node.index)"><Icon icon="solar:smartphone-bold-duotone" class="size-6 text-sky-500" /><p class="mt-2 truncate text-[13px] font-semibold">{{ node.page?.name ?? node.pageId }}</p><p class="mt-1 text-[11px] text-slate-500">节点 {{ node.index + 1 }}</p></button><div v-if="!schemeFlowNodes.length" class="grid h-full place-items-center text-[13px] text-slate-500">请先向方案添加页面</div></div><div class="mt-4 grid gap-2 text-[12px] text-slate-500"><p>全局上一页：{{ selectedScheme?.globalPrevious.trigger.displayName }} / {{ selectedScheme?.globalPrevious.animation }}</p><p>全局下一页：{{ selectedScheme?.globalNext.trigger.displayName }} / {{ selectedScheme?.globalNext.animation }}</p><p v-for="edge in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}`">{{ edge.fromPageId }} -> {{ edge.toPageId }}：{{ edge.trigger.displayName }} / {{ edge.animation }}</p></div></div></div>
           </section>
 
-          <section v-else class="soft-card scrollable h-full overflow-auto p-5" data-no-window-drag>
+          <section v-else class="scrollable h-full overflow-auto" data-no-window-drag>
             <div class="mb-4 flex items-center justify-between"><h2 class="text-[16px] font-semibold">{{ viewTitle }}</h2><button class="rounded-full bg-sky-500 px-3 py-1.5 text-[12px] font-medium text-white" @click="activeView === 'plugin' ? importPlugin() : startProgress('操作完成')">{{ activeView === 'plugin' ? '导入插件' : '执行操作' }}</button></div>
-            <div v-if="activeView === 'plugin'" class="grid h-[calc(100%-44px)] grid-cols-[320px_1fr] gap-4">
-              <div class="scrollable grid content-start gap-3 overflow-auto pr-1" data-no-window-drag>
+            <div v-if="activeView === 'plugin'" class="plugin-layout">
+              <div class="soft-card scrollable grid content-start gap-3 overflow-auto p-4" data-no-window-drag>
                 <button v-for="plugin in workspace.plugins" :key="plugin.id" class="rounded-2xl bg-white px-4 py-3 text-left text-[13px] shadow-sm dark:bg-slate-900" :class="selectedPlugin?.id === plugin.id ? 'ring-2 ring-sky-400' : ''" @click="selectedPluginId = plugin.id">
                   <div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="truncate font-semibold">{{ plugin.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ plugin.id }} · {{ plugin.version }}</p></div><span class="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-600 dark:bg-sky-950">已注册</span></div>
                   <p class="mt-2 text-[12px] text-slate-500">{{ plugin.persistent ? '允许常驻后台' : '按需调用' }} · {{ plugin.permissions.length }} 权限</p>
@@ -780,7 +828,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 </button>
                 <div v-if="!workspace.plugins.length" class="rounded-2xl bg-white px-4 py-8 text-center text-[13px] text-slate-500 shadow-sm dark:bg-slate-900">暂无插件。导入插件包后，OneDesk 会读取插件清单、显示权限并注册后端进程。</div>
               </div>
-              <div class="rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900">
+              <div class="soft-card p-4">
                 <template v-if="selectedPlugin">
                   <h3 class="text-[15px] font-semibold">{{ selectedPlugin.name }}</h3>
                   <p class="mt-1 text-[12px] text-slate-500">{{ selectedPlugin.id }} · {{ selectedPlugin.version }}</p>
@@ -806,15 +854,15 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <p v-else class="text-[13px] text-slate-500">选择一个插件后查看设置和权限。</p>
               </div>
             </div>
-            <div v-else class="grid h-[calc(100%-44px)] grid-cols-[220px_1fr] gap-4">
-              <aside class="rounded-2xl bg-white p-2 text-[13px] shadow-sm dark:bg-slate-900">
+            <div v-else class="settings-layout">
+              <aside class="soft-card p-2 text-[13px]">
                 <button class="menu-row" :class="settingsSection === 'general' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'general'"><Icon icon="solar:tuning-2-bold-duotone" class="size-5" />通用</button>
                 <button class="menu-row" :class="settingsSection === 'connection' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'connection'"><Icon icon="solar:link-bold-duotone" class="size-5" />连接</button>
                 <button class="menu-row" :class="settingsSection === 'permission' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'permission'"><Icon icon="solar:shield-keyhole-bold-duotone" class="size-5" />权限管理</button>
                 <button class="menu-row" :class="settingsSection === 'plugins' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'plugins'"><Icon icon="solar:plug-circle-bold-duotone" class="size-5" />插件</button>
                 <button class="menu-row" :class="settingsSection === 'logs' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'logs'"><Icon icon="solar:document-text-bold-duotone" class="size-5" />日志</button>
               </aside>
-              <section class="scrollable overflow-auto rounded-2xl bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag>
+              <section class="soft-card scrollable overflow-auto p-4" data-no-window-drag>
                 <div v-if="settingsSection === 'general'" class="grid max-w-[560px] gap-3 text-[13px]">
                   <label class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950"><span><span class="block font-semibold">开机启动</span><span class="mt-1 block text-[12px] text-slate-500">系统登录后自动启动 OneDesk 桌面端</span></span><input v-model="enableStartup" type="checkbox" class="size-4 accent-sky-500" /></label>
                   <label class="field-label">界面语言<input class="field" value="简体中文" disabled /></label>
@@ -867,9 +915,11 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
       </div>
     </div>
 
-    <div v-if="workspace.toast && !workspace.loading" class="toast-panel pointer-events-none fixed bottom-8 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-[12px] font-medium text-white shadow-2xl shadow-slate-950/20 dark:bg-white dark:text-slate-950">
-      <Icon icon="solar:check-circle-bold-duotone" class="size-4 text-sky-400" />
-      <span>{{ workspace.toast }}</span>
+    <div v-if="toasts.length" class="toast-stack">
+      <div v-for="toast in toasts" :key="toast.id" class="toast-panel flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-[12px] font-medium text-slate-800 shadow-2xl shadow-slate-950/20 dark:bg-slate-950 dark:text-white">
+        <Icon icon="solar:check-circle-bold-duotone" class="size-4 text-sky-400" />
+        <span>{{ toast.message }}</span>
+      </div>
     </div>
   </main>
 </template>

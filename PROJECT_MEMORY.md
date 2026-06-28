@@ -43,6 +43,8 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - The Windows shell exposes `window.resizeStart` so the WebView frontend can hand edge/corner resizing back to native Windows hit testing instead of relying only on WinForms client-area hit testing.
 - Desktop management cards for components, pages, and schemes should open their editor when the card itself is clicked; delete actions require an in-app confirmation dialog.
 - Desktop editor page names are editable from the top header, and save/export/apply controls belong in the top header area immediately to the left of the device selector.
+- In-app desktop toast notifications are queued as a short-lived stack, auto-dismiss after a few seconds, and use light surfaces in light mode and dark surfaces in dark mode.
+- Scheme editing requires a real flowchart canvas with page nodes, connecting lines, arrow direction, edge labels or related edge configuration, and drag-based page node/order adjustment.
 - Desktop device management must not show the desktop client itself as a managed device. The desktop shows local LAN IP, QUIC port, verification code, QR payload, and a generated QR image so mobile clients initiate pairing. Real mobile pairing still depends on completing the QUIC transport loop.
 - The desktop device selector displays the currently selected/trusted mobile device icon and name. If a mobile device has a remark, UI should display the remark.
 - Creating a component, page, or scheme should enter the corresponding editor immediately, where the user can edit the name and save.

@@ -154,9 +154,14 @@ header p {
 
 .manager-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 360px));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 16px;
   justify-content: start;
+}
+
+.manager-grid > * {
+  width: 100%;
+  max-width: 520px;
 }
 
 .empty-card {
@@ -265,11 +270,33 @@ header p {
 }
 
 .field {
+  width: 100%;
   border-radius: 12px;
+  border: 1px solid transparent;
   background: rgb(255 255 255);
   padding: 8px 10px;
   color: rgb(15 23 42);
   outline: none;
+}
+
+.field:focus {
+  border-color: rgb(14 165 233 / 0.55);
+  box-shadow: 0 0 0 3px rgb(14 165 233 / 0.12);
+}
+
+select.field {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgb(100 116 139) 50%),
+    linear-gradient(135deg, rgb(100 116 139) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 11px) 50%;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px;
 }
 
 .field-label {
@@ -332,6 +359,67 @@ header p {
 .dark .field {
   background: rgb(30 41 59);
   color: white;
+}
+
+.ratio-field {
+  display: grid;
+  min-width: 0;
+  max-width: 76px;
+  gap: 5px;
+}
+
+.settings-layout,
+.plugin-layout {
+  display: grid;
+  height: 100%;
+  gap: 18px;
+}
+
+.settings-layout {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.plugin-layout {
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+}
+
+.scheme-flow-canvas {
+  position: relative;
+  min-height: 440px;
+  overflow: hidden;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 16px 16px, rgb(14 165 233 / 0.12) 1px, transparent 1px),
+    rgb(248 250 252);
+  background-size: 28px 28px;
+}
+
+.dark .scheme-flow-canvas {
+  background:
+    radial-gradient(circle at 16px 16px, rgb(14 165 233 / 0.18) 1px, transparent 1px),
+    rgb(2 6 23);
+}
+
+.scheme-flow-node {
+  position: absolute;
+  width: 150px;
+  cursor: grab;
+  user-select: none;
+}
+
+.scheme-flow-node:active {
+  cursor: grabbing;
+}
+
+.toast-stack {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 50;
+  display: grid;
+  width: min(360px, calc(100vw - 56px));
+  gap: 10px;
+  pointer-events: none;
 }
 
 .theme-dot {
