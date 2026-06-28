@@ -30,17 +30,23 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - No module is locked as complete yet.
 - Windows desktop shell currently uses WinForms plus WebView2 as the working Chromium shell while the cross-platform desktop direction remains Avalonia plus Chromium/CEF.
 - The Windows shell enforces direct frontend networking blocks for fetch, XHR, WebSocket, EventSource, sendBeacon, remote navigation, and remote resource requests.
-- The Windows shell exposes bridge requests for workspace list/save/delete/apply, component/page/scheme export, capability list, permission list/grant/revoke, pairing code generation, gateway status, device status, scheme cache manifest, logs, theme, window drag, minimize, maximize/restore, and close.
+- The Windows shell exposes bridge requests for workspace list/save/delete/apply, component/page/scheme export, two-step component/page/scheme import inspection and confirmation, two-step plugin import inspection and confirmation, capability list, permission list/grant/revoke, pairing code generation, gateway status, device status, scheme cache manifest, logs, theme, window drag, minimize, maximize/restore, and close.
 - Component/page/scheme export currently writes packages to `%LOCALAPPDATA%\OneDesk\exports`; component export includes actions, page export includes referenced components/actions, and scheme export includes referenced pages/components/actions plus a plugin dependency report.
 - Permission grants are persisted in `%LOCALAPPDATA%\OneDesk\permission-grants.json`.
 - Structured desktop logs are stored as JSONL files under `%LOCALAPPDATA%\OneDesk\logs`.
-- QUIC gateway service state and routing scaffolding are present and start locally, but the real MsQuic transport loop is not yet fully attached.
-- Desktop UI has Chinese-only visible text, card-based component/page/scheme management, device management dialog, vertical theme selector, custom window controls, transparent/frosted shell background, and opaque content cards/nav surfaces.
-- Desktop device management must not show the desktop client itself as a managed device. The desktop shows local LAN IP, QUIC port, verification code, and QR payload so mobile clients initiate pairing.
+- QUIC gateway service state and routing scaffolding are present and start locally, but the real MsQuic transport loop is not yet fully attached. This must not be treated as completed device communication.
+- Desktop UI has Chinese-only visible text, card-based component/page/scheme management, device management dialog with selectable trusted mobile devices, vertical theme selector, custom window controls, transparent/frosted shell background, and opaque content cards/nav surfaces.
+- Desktop device management must not show the desktop client itself as a managed device. The desktop shows local LAN IP, QUIC port, verification code, QR payload, and a generated QR image so mobile clients initiate pairing. Real mobile pairing still depends on completing the QUIC transport loop.
 - The desktop device selector displays the currently selected/trusted mobile device icon and name. If a mobile device has a remark, UI should display the remark.
 - Creating a component, page, or scheme should enter the corresponding editor immediately, where the user can edit the name and save.
 - Component/page/scheme management pages require both import and create actions.
 - Scrollable areas and scrollbars must not trigger native window dragging.
+- Component import, page import, scheme import, and plugin import now use a two-step UI flow: inspect selected package manifest, show requested permissions and high-risk flags, allow the user to adjust grants, then confirm import. This is implemented for manifest-based grants, but dependency conflict resolution still needs a full user choice flow.
+- Desktop component code editing now has a file-tree style UI with multiple draft files. Persisting arbitrary edited file contents as real component project files is still incomplete.
+- Page editing now supports selecting grid cells, setting span, binding components, and editing cell outline/radius in the UI.
+- Scheme editing now supports adding/removing/reordering pages and editing global animation values in the UI. Full edge editing for page-specific switching remains incomplete.
+- Plugin import uses safe zip extraction limits for the new confirmed import path and the legacy bridge path. Plugin settings schema can be rendered as a basic JSON Schema form for string, number, integer, and boolean fields, but settings persistence/submission back to the plugin is still incomplete.
+- Android frontend no longer simulates a successful connection when the native shell bridge is absent. Android native connection still does not perform real QUIC pairing.
 
 ## Product Summary
 

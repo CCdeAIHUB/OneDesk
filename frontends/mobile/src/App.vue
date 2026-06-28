@@ -125,7 +125,10 @@ function finishConnect(qr?: string) {
   const raw = qr
     ? window.OneDeskNative?.connectByQr?.(qr)
     : window.OneDeskNative?.connect?.(host.value, port.value, code.value);
-  const response = raw ? (JSON.parse(raw) as NativeResponse<{ desktop: KnownDesktop; cacheUpdated: boolean }>) : previewConnect();
+  const response = raw ? (JSON.parse(raw) as NativeResponse<{ desktop: KnownDesktop; cacheUpdated: boolean }>) : {
+    ok: false,
+    message: "移动端连接必须通过原生壳子转发，网页预览不能模拟连接成功。",
+  };
 
   if (!response.ok || !response.payload) {
     toast.value = response.message ?? "连接失败";
@@ -138,25 +141,6 @@ function finishConnect(qr?: string) {
   connected.value = true;
   updating.value = false;
   toast.value = response.payload.cacheUpdated ? "方案缓存已更新" : "已使用本地方案缓存";
-}
-
-function previewConnect(): NativeResponse<{ desktop: KnownDesktop; cacheUpdated: boolean }> {
-  return {
-    ok: true,
-    payload: {
-      cacheUpdated: true,
-      desktop: {
-        desktopId: "desktop-preview",
-        name: "OneDesk Desktop",
-        host: host.value,
-        port: port.value,
-        trusted: true,
-        schemeVersion: "1.0.0",
-        schemeHash: "preview",
-        lastConnectedAt: new Date().toISOString(),
-      },
-    },
-  };
 }
 
 function loadScheme(desktopId: string) {

@@ -184,7 +184,7 @@ public sealed class SchemePackageService
         Directory.Move(temp, destinationDirectory);
     }
 
-    private static void SafeExtractPackage(string packagePath, string destinationDirectory)
+    public static void SafeExtractPackage(string packagePath, string destinationDirectory)
     {
         Directory.CreateDirectory(destinationDirectory);
         using var archive = ZipFile.OpenRead(packagePath);

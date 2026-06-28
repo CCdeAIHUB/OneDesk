@@ -53,6 +53,7 @@ public sealed class MainForm : Form
     private PluginHostService? _plugins;
     private StructuredLogStore? _logs;
     private Label? _loadingLabel;
+    private readonly Dictionary<string, PendingPackageImport> _pendingPackageImports = new(StringComparer.OrdinalIgnoreCase);
 
     public MainForm()
     {
@@ -413,6 +414,8 @@ public sealed class MainForm : Form
             "workspace.exportComponent" => await HandleExportComponentAsync(message),
             "workspace.exportPage" => await HandleExportPageAsync(message),
             "workspace.exportScheme" => await HandleExportSchemeAsync(message),
+            "workspace.inspectImport" => HandleInspectWorkspaceImport(message),
+            "workspace.confirmImport" => HandleConfirmWorkspaceImport(message),
             "workspace.importComponent" => HandleImportComponent(message),
             "workspace.importPage" => HandleImportPage(message),
             "workspace.importScheme" => HandleImportScheme(message),
@@ -430,6 +433,8 @@ public sealed class MainForm : Form
             "gateway.status" => HandleGatewayStatus(message),
             "scheme.cacheManifest" => await HandleSchemeCacheManifestAsync(message),
             "plugin.list" => new BridgeResponse(message.RequestId, true, _plugins?.InstalledPlugins ?? []),
+            "plugin.inspectImport" => HandleInspectPluginImport(message),
+            "plugin.confirmImport" => await HandleConfirmPluginImportAsync(message),
             "plugin.import" => await HandlePluginImportAsync(message),
             "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
             "window.minimize" => HandleWindowMinimize(message),
@@ -673,6 +678,164 @@ public sealed class MainForm : Form
         }
     }
 
+    private BridgeResponse HandleInspectWorkspaceImport(BridgeMessage message)
+    {
+        var kind = ReadPayloadString(message, "kind");
+        if (kind is not ("Component" or "Page" or "Scheme"))
+        {
+            return InvalidPayload(message);
+        }
+
+        var (title, filter) = kind switch
+        {
+            "Component" => ("组件包", "OneDesk Component Package (*.zip;*.onedesk-component)|*.zip;*.onedesk-component"),
+            "Page" => ("页面包", "OneDesk Page Package (*.zip;*.onedesk-page)|*.zip;*.onedesk-page"),
+            _ => ("方案包", "OneDesk Scheme Package (*.zip;*.onedesk-scheme)|*.zip;*.onedesk-scheme")
+        };
+
+        using var dialog = new OpenFileDialog
+        {
+            Title = $"选择{title}",
+            Filter = $"{filter}|All Files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "UserCancelled", "已取消导入");
+        }
+
+        try
+        {
+            var inspection = InspectWorkspacePackage(kind, dialog.FileName);
+            var token = Guid.NewGuid().ToString("N");
+            _pendingPackageImports[token] = new PendingPackageImport(token, kind, dialog.FileName, inspection.SourceKeys);
+            return new BridgeResponse(message.RequestId, true, inspection with { Token = token });
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ImportInspectionFailed", ex.Message);
+        }
+    }
+
+    private BridgeResponse HandleConfirmWorkspaceImport(BridgeMessage message)
+    {
+        if (_packages is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var token = ReadPayloadString(message, "token");
+        if (string.IsNullOrWhiteSpace(token) || !_pendingPackageImports.Remove(token, out var pending))
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ImportSessionExpired", "导入会话不存在或已过期");
+        }
+
+        try
+        {
+            var installedPluginIds = new HashSet<string>(_plugins?.InstalledPlugins.Select(plugin => plugin.Id) ?? [], StringComparer.OrdinalIgnoreCase);
+            var result = pending.Kind switch
+            {
+                "Component" => _packages.ImportComponent(pending.Path),
+                "Page" => _packages.ImportPage(pending.Path),
+                "Scheme" => _packages.ImportScheme(pending.Path, installedPluginIds),
+                _ => throw new InvalidOperationException("Unsupported import kind.")
+            };
+
+            GrantImportedPermissions(message, pending.SourceKeys);
+            return new BridgeResponse(message.RequestId, result.Ready, result, result.Ready ? null : "DependencyMissing", result.Ready ? null : "导入完成，但存在缺失或冲突的插件依赖");
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ImportFailed", ex.Message);
+        }
+    }
+
+    private PackageInspection InspectWorkspacePackage(string kind, string packagePath)
+    {
+        using var archive = ZipFile.OpenRead(packagePath);
+        var permissions = new List<PermissionDeclaration>();
+        var sourceKeys = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var pluginDependencies = new List<DependencyDefinition>();
+        var title = Path.GetFileName(packagePath);
+
+        foreach (var entry in archive.Entries.Where(entry => !string.IsNullOrWhiteSpace(entry.Name)))
+        {
+            if (entry.FullName.EndsWith("onedesk.component.json", StringComparison.OrdinalIgnoreCase))
+            {
+                using var stream = entry.Open();
+                var component = JsonSerializer.Deserialize<ComponentDefinition>(stream, JsonOptions);
+                if (component is null)
+                {
+                    continue;
+                }
+
+                title = component.Name;
+                var componentPermissions = component.RequestedPermissions
+                    .Select(permission => new PermissionDeclaration(permission.Category, permission.Capability, permission.HighRisk, permission.Description))
+                    .ToArray();
+                permissions.AddRange(componentPermissions);
+                sourceKeys[$"component:{component.Id}"] = componentPermissions.Select(permission => permission.Capability).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                pluginDependencies.AddRange(component.PluginDependencies);
+            }
+
+            if (entry.FullName.EndsWith("onedesk.scheme.json", StringComparison.OrdinalIgnoreCase))
+            {
+                using var stream = entry.Open();
+                var scheme = JsonSerializer.Deserialize<SchemeDefinition>(stream, JsonOptions);
+                if (scheme is not null)
+                {
+                    title = scheme.Name;
+                    pluginDependencies.AddRange(scheme.PluginDependencies);
+                }
+            }
+        }
+
+        var distinctPermissions = permissions
+            .GroupBy(permission => permission.Capability, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(permission => permission.Category, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(permission => permission.Capability, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new PackageInspection(
+            "",
+            kind,
+            title,
+            packagePath,
+            distinctPermissions,
+            pluginDependencies
+                .GroupBy(dependency => dependency.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToArray(),
+            sourceKeys);
+    }
+
+    private void GrantImportedPermissions(BridgeMessage message, IReadOnlyDictionary<string, IReadOnlyList<string>> sourceKeys)
+    {
+        if (_permissions is null)
+        {
+            return;
+        }
+
+        var allowed = ReadPayloadStringArray(message, "grantedCapabilities");
+        var allowedSet = allowed.Count == 0
+            ? null
+            : new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (sourceKey, capabilities) in sourceKeys)
+        {
+            foreach (var capability in capabilities)
+            {
+                if (allowedSet is null || allowedSet.Contains(capability))
+                {
+                    _permissions.Grant(sourceKey, capability);
+                }
+            }
+        }
+    }
+
     private BridgeResponse HandleImportComponent(BridgeMessage message)
     {
         return ImportPackage(message, "组件包", "OneDesk Component Package (*.zip;*.onedesk-component)|*.zip;*.onedesk-component", path => _packages!.ImportComponent(path));
@@ -863,7 +1026,6 @@ public sealed class MainForm : Form
             return ShellNotReady(message);
         }
 
-        var paths = _services.GetRequiredService<OneDeskDataPaths>();
         using var dialog = new OpenFileDialog
         {
             Title = "导入插件包",
@@ -879,36 +1041,125 @@ public sealed class MainForm : Form
 
         try
         {
-            var pluginRoot = Path.Combine(paths.Plugins, Path.GetFileNameWithoutExtension(dialog.FileName));
-            var temp = $"{pluginRoot}.tmp-{Guid.NewGuid():N}";
-            ZipFile.ExtractToDirectory(dialog.FileName, temp);
-            var manifestPath = Directory.EnumerateFiles(temp, "onedesk.plugin.json", SearchOption.AllDirectories).FirstOrDefault();
-            if (manifestPath is null)
-            {
-                Directory.Delete(temp, recursive: true);
-                return new BridgeResponse(message.RequestId, false, null, "PluginManifestMissing", "插件包缺少 onedesk.plugin.json");
-            }
-
-            var manifest = JsonSerializer.Deserialize<PluginManifest>(await File.ReadAllTextAsync(manifestPath), JsonOptions);
-            if (manifest is null)
-            {
-                Directory.Delete(temp, recursive: true);
-                return new BridgeResponse(message.RequestId, false, null, "InvalidPluginManifest", "插件清单格式不正确");
-            }
-
-            if (Directory.Exists(pluginRoot))
-            {
-                Directory.Delete(pluginRoot, recursive: true);
-            }
-
-            Directory.Move(temp, pluginRoot);
-            await _plugins.RegisterManifestAsync(manifest, pluginRoot);
+            var manifest = await InstallPluginPackageAsync(dialog.FileName);
             return new BridgeResponse(message.RequestId, true, manifest);
         }
         catch (Exception ex)
         {
             return new BridgeResponse(message.RequestId, false, null, "PluginImportFailed", ex.Message);
         }
+    }
+
+    private BridgeResponse HandleInspectPluginImport(BridgeMessage message)
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "选择插件包",
+            Filter = "OneDesk Plugin Package (*.onedesk-plugin;*.zip)|*.onedesk-plugin;*.zip|All Files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "UserCancelled", "已取消插件导入");
+        }
+
+        try
+        {
+            using var archive = ZipFile.OpenRead(dialog.FileName);
+            var manifestEntry = archive.Entries.FirstOrDefault(entry => entry.FullName.EndsWith("onedesk.plugin.json", StringComparison.OrdinalIgnoreCase));
+            if (manifestEntry is null)
+            {
+                return new BridgeResponse(message.RequestId, false, null, "PluginManifestMissing", "插件包缺少 onedesk.plugin.json");
+            }
+
+            using var stream = manifestEntry.Open();
+            var manifest = JsonSerializer.Deserialize<PluginManifest>(stream, JsonOptions);
+            if (manifest is null)
+            {
+                return new BridgeResponse(message.RequestId, false, null, "InvalidPluginManifest", "插件清单格式不正确");
+            }
+
+            var token = Guid.NewGuid().ToString("N");
+            _pendingPackageImports[token] = new PendingPackageImport(
+                token,
+                "Plugin",
+                dialog.FileName,
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [$"plugin:{manifest.Id}"] = manifest.Permissions.Select(permission => permission.Capability).ToArray()
+                });
+
+            return new BridgeResponse(message.RequestId, true, new PackageInspection(
+                token,
+                "Plugin",
+                manifest.Name,
+                dialog.FileName,
+                manifest.Permissions,
+                [],
+                _pendingPackageImports[token].SourceKeys));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "PluginInspectionFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleConfirmPluginImportAsync(BridgeMessage message)
+    {
+        if (_plugins is null || _services is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var token = ReadPayloadString(message, "token");
+        if (string.IsNullOrWhiteSpace(token) || !_pendingPackageImports.Remove(token, out var pending) || pending.Kind != "Plugin")
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ImportSessionExpired", "插件导入会话不存在或已过期");
+        }
+
+        try
+        {
+            var manifest = await InstallPluginPackageAsync(pending.Path);
+            GrantImportedPermissions(message, pending.SourceKeys);
+            return new BridgeResponse(message.RequestId, true, manifest);
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "PluginImportFailed", ex.Message);
+        }
+    }
+
+    private async Task<PluginManifest> InstallPluginPackageAsync(string packagePath)
+    {
+        if (_plugins is null || _services is null)
+        {
+            throw new InvalidOperationException("Plugin service is not ready.");
+        }
+
+        var paths = _services.GetRequiredService<OneDeskDataPaths>();
+        var pluginRoot = Path.Combine(paths.Plugins, Path.GetFileNameWithoutExtension(packagePath));
+        var temp = $"{pluginRoot}.tmp-{Guid.NewGuid():N}";
+        SchemePackageService.SafeExtractPackage(packagePath, temp);
+        var manifestPath = Directory.EnumerateFiles(temp, "onedesk.plugin.json", SearchOption.AllDirectories).FirstOrDefault();
+        if (manifestPath is null)
+        {
+            Directory.Delete(temp, recursive: true);
+            throw new InvalidDataException("插件包缺少 onedesk.plugin.json");
+        }
+
+        var manifest = JsonSerializer.Deserialize<PluginManifest>(await File.ReadAllTextAsync(manifestPath), JsonOptions)
+            ?? throw new InvalidDataException("插件清单格式不正确");
+
+        if (Directory.Exists(pluginRoot))
+        {
+            Directory.Delete(pluginRoot, recursive: true);
+        }
+
+        Directory.Move(temp, pluginRoot);
+        await _plugins.RegisterManifestAsync(manifest, pluginRoot);
+        return manifest;
     }
 
     private BridgeResponse HandlePairingGenerate(BridgeMessage message)
@@ -1076,6 +1327,24 @@ public sealed class MainForm : Form
         return fallback;
     }
 
+    private static IReadOnlyList<string> ReadPayloadStringArray(BridgeMessage message, string key)
+    {
+        if (message.Payload is not { ValueKind: JsonValueKind.Object } payload ||
+            !payload.TryGetProperty(key, out var value) ||
+            value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return value.EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => item.GetString())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private static BridgeResponse ShellNotReady(BridgeMessage message)
     {
         return new BridgeResponse(message.RequestId, false, null, "ShellNotReady", "OneDesk 桥接服务尚未初始化完成");
@@ -1222,4 +1491,19 @@ public sealed class MainForm : Form
         object? Payload,
         string? ErrorCode = null,
         string? Message = null);
+
+    private sealed record PendingPackageImport(
+        string Token,
+        string Kind,
+        string Path,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> SourceKeys);
+
+    private sealed record PackageInspection(
+        string Token,
+        string Kind,
+        string Name,
+        string PackagePath,
+        IReadOnlyList<PermissionDeclaration> Permissions,
+        IReadOnlyList<DependencyDefinition> PluginDependencies,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> SourceKeys);
 }

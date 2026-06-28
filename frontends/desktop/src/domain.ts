@@ -193,6 +193,16 @@ export interface PackageImportResult {
   missingPluginIds: string[];
 }
 
+export interface PackageInspection {
+  token: string;
+  kind: "Component" | "Page" | "Scheme" | "Plugin";
+  name: string;
+  packagePath: string;
+  permissions: PermissionGrant[];
+  pluginDependencies: DependencyDefinition[];
+  sourceKeys: Record<string, string[]>;
+}
+
 export interface SchemeCacheManifest {
   activeSchemeId: string;
   appliedAt: string;

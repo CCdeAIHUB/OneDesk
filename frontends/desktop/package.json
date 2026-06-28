@@ -14,9 +14,11 @@
     "@iconify/vue": "latest",
     "@onedesk/protocol": "workspace:*",
     "@tailwindcss/vite": "latest",
+    "qrcode": "^1.5.4",
     "vue": "latest"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "latest",
     "typescript": "latest",
     "vite": "latest",
