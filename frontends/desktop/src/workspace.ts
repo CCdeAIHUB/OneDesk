@@ -122,8 +122,8 @@ export async function loadWorkspace(): Promise<void> {
   }
 }
 
-export async function applyScheme(schemeId: string): Promise<void> {
-  const response = await sendShell<{ schemeId: string }>("workspace.applyScheme", { id: schemeId });
+export async function applyScheme(schemeId: string, deviceId?: string): Promise<void> {
+  const response = await sendShell<{ schemeId: string; deviceId?: string | null }>("workspace.applyScheme", { id: schemeId, deviceId });
   if (response.ok) {
     workspace.activeSchemeId = response.payload?.schemeId ?? schemeId;
     workspace.toast = "方案已应用到设备";

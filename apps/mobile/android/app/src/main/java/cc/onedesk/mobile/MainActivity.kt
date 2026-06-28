@@ -16,6 +16,10 @@ import android.webkit.WebViewClient
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
@@ -24,11 +28,13 @@ class MainActivity : Activity() {
     private lateinit var webView: WebView
     private val prefs by lazy { getSharedPreferences("onedesk-mobile", Context.MODE_PRIVATE) }
     private val disconnectedLogs = mutableListOf<JSONObject>()
-    private val deviceId by lazy {
+    private val localDeviceId by lazy {
         prefs.getString("deviceId", null) ?: "android-${UUID.randomUUID()}".also {
             prefs.edit().putString("deviceId", it).apply()
         }
     }
+
+    private fun currentDeviceId(): String = prefs.getString("assignedDeviceId", null) ?: localDeviceId
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,7 +64,7 @@ class MainActivity : Activity() {
         disconnectedLogs += JSONObject()
             .put("logId", "log-${UUID.randomUUID()}")
             .put("createdAt", Instant.now().toString())
-            .put("sourceDeviceId", deviceId)
+            .put("sourceDeviceId", currentDeviceId())
             .put("level", level)
             .put("category", category)
             .put("message", message)
@@ -66,7 +72,7 @@ class MainActivity : Activity() {
 
     inner class OneDeskBridge(private val context: Context) {
         @JavascriptInterface
-        fun getDeviceId(): String = deviceId
+        fun getDeviceId(): String = currentDeviceId()
 
         @JavascriptInterface
         fun listKnownDesktops(): String {
@@ -75,34 +81,69 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun connect(host: String, port: Int, code: String): String {
-            if (!Regex("^\\d{6}$").matches(code)) {
+            val known = findDesktop(host, port)
+            val hasTrust = known?.optString("trustCredential").orEmpty().isNotBlank()
+            if (!hasTrust && !Regex("^\\d{6}$").matches(code)) {
                 return response(false)
                     .put("errorCode", "InvalidVerificationCode")
                     .put("message", "验证码必须为 6 位数字")
                     .toString()
             }
 
-            val desktopId = "desktop-${sha256("$host:$port").take(12)}"
-            val desktop = JSONObject()
-                .put("desktopId", desktopId)
-                .put("name", "OneDesk Desktop")
-                .put("host", host)
-                .put("port", port)
-                .put("trusted", true)
-                .put("schemeVersion", "1.0.0")
-                .put("schemeHash", sha256("$desktopId:1.0.0"))
-                .put("lastConnectedAt", Instant.now().toString())
+            return try {
+                val request = JSONObject()
+                    .put("type", if (hasTrust) "connect" else "pair")
+                    .put("code", if (hasTrust) JSONObject.NULL else code)
+                    .put("deviceId", currentDeviceId())
+                    .put("displayName", android.os.Build.MODEL ?: "Android")
+                    .put("platform", "android")
+                    .put("architecture", System.getProperty("os.arch") ?: "unknown")
+                    .put("trustCredential", known?.optString("trustCredential") ?: JSONObject.NULL)
+                    .put("logs", JSONArray(disconnectedLogs))
+                val gateway = sendGateway(host, port, request)
+                if (!gateway.optBoolean("ok")) {
+                    return gateway.toString()
+                }
 
-            upsertDesktop(desktop)
-            flushDisconnectedLogs(desktopId)
-            cacheScheme(desktopId, desktop.getString("schemeVersion"), desktop.getString("schemeHash"))
+                val payload = gateway.getJSONObject("payload")
+                val desktopIdentity = payload.getJSONObject("desktop")
+                val assignedMobile = payload.optJSONObject("assignedMobile")
+                val assignedDeviceId = assignedMobile?.optString("deviceId").orEmpty()
+                if (assignedDeviceId.isNotBlank()) {
+                    prefs.edit().putString("assignedDeviceId", assignedDeviceId).apply()
+                }
 
-            return response(true)
-                .put("payload", JSONObject()
-                    .put("deviceId", deviceId)
-                    .put("desktop", desktop)
-                    .put("cacheUpdated", true))
-                .toString()
+                val trustCredential = payload.optString("trustCredential", known?.optString("trustCredential") ?: "")
+                val scheme = payload.getJSONObject("scheme")
+                val desktopId = desktopIdentity.getString("deviceId")
+                val desktop = JSONObject()
+                    .put("desktopId", desktopId)
+                    .put("name", desktopIdentity.optString("displayName", "OneDesk Desktop"))
+                    .put("host", host)
+                    .put("port", port)
+                    .put("trusted", trustCredential.isNotBlank())
+                    .put("trustCredential", trustCredential)
+                    .put("schemeVersion", scheme.optString("version", "0"))
+                    .put("schemeHash", scheme.optString("hash", ""))
+                    .put("lastConnectedAt", Instant.now().toString())
+
+                upsertDesktop(desktop)
+                cacheScheme(desktopId, scheme)
+                flushDisconnectedLogs(desktopId)
+
+                response(true)
+                    .put("payload", JSONObject()
+                        .put("deviceId", currentDeviceId())
+                        .put("desktop", desktop)
+                        .put("cacheUpdated", true))
+                    .toString()
+            } catch (ex: Exception) {
+                appendDisconnectedLog("Error", "Connect", ex.message ?: "连接失败")
+                response(false)
+                    .put("errorCode", "GatewayConnectFailed")
+                    .put("message", ex.message ?: "无法连接桌面端")
+                    .toString()
+            }
         }
 
         @JavascriptInterface
@@ -126,11 +167,11 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun callJsApi(targetDeviceId: String, capability: String, payloadJson: String): String {
             val base = response(false)
-                .put("requestId", "req-${UUID.randomUUID()}")
+                    .put("requestId", "req-${UUID.randomUUID()}")
                 .put("targetDeviceId", targetDeviceId)
                 .put("capability", capability)
 
-            return if (targetDeviceId == deviceId) {
+            return if (targetDeviceId == currentDeviceId()) {
                 executeLocal(capability, payloadJson, base).toString()
             } else {
                 appendDisconnectedLog("Info", "JsApi", "离线状态下排队转发：$capability")
@@ -149,7 +190,7 @@ class MainActivity : Activity() {
 
         private fun executeLocal(capability: String, payloadJson: String, response: JSONObject): JSONObject {
             return when (capability) {
-                "device.identity" -> response.put("ok", true).put("payload", JSONObject().put("deviceId", deviceId).put("platform", "android"))
+                "device.identity" -> response.put("ok", true).put("payload", JSONObject().put("deviceId", currentDeviceId()).put("platform", "android"))
                 "log.write" -> {
                     appendDisconnectedLog("Info", "Frontend", payloadJson)
                     response.put("ok", true)
@@ -174,23 +215,68 @@ class MainActivity : Activity() {
             prefs.edit().putString("knownDesktops", next.toString()).apply()
         }
 
-        private fun cacheScheme(desktopId: String, version: String, hash: String) {
+        private fun findDesktop(host: String, port: Int): JSONObject? {
+            val list = JSONArray(listKnownDesktops())
+            for (index in 0 until list.length()) {
+                val item = list.getJSONObject(index)
+                if (item.optString("host") == host && item.optInt("port") == port) {
+                    return item
+                }
+            }
+            return null
+        }
+
+        private fun sendGateway(host: String, port: Int, request: JSONObject): JSONObject {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 5000
+                val bytes = request.toString().toByteArray(Charsets.UTF_8)
+                val packet = DatagramPacket(bytes, bytes.size, InetAddress.getByName(host), port)
+                socket.send(packet)
+                val buffer = ByteArray(512 * 1024)
+                val response = DatagramPacket(buffer, buffer.size)
+                try {
+                    socket.receive(response)
+                } catch (ex: SocketTimeoutException) {
+                    throw IllegalStateException("连接桌面端超时")
+                }
+                return JSONObject(String(response.data, 0, response.length, Charsets.UTF_8))
+            }
+        }
+
+        private fun cacheScheme(desktopId: String, gatewayScheme: JSONObject) {
+            val payload = gatewayScheme.optJSONObject("payload") ?: JSONObject()
+            val pages = payload.optJSONArray("pages") ?: JSONArray()
+            val components = payload.optJSONArray("components") ?: JSONArray()
+            val componentNames = mutableMapOf<String, String>()
+            for (index in 0 until components.length()) {
+                val component = components.getJSONObject(index)
+                componentNames[component.optString("id")] = component.optString("name", "组件")
+            }
+
+            val mobilePages = JSONArray()
+            for (pageIndex in 0 until pages.length()) {
+                val page = pages.getJSONObject(pageIndex)
+                val tiles = JSONArray()
+                val cells = page.optJSONArray("cells") ?: JSONArray()
+                for (cellIndex in 0 until cells.length()) {
+                    val cell = cells.getJSONObject(cellIndex)
+                    val componentId = cell.optString("componentId", "")
+                    if (componentId.isBlank()) {
+                        continue
+                    }
+                    tiles.put(tile(componentNames[componentId] ?: componentId, "solar:bolt-circle-bold-duotone", "sky"))
+                }
+                mobilePages.put(JSONObject()
+                    .put("name", page.optString("name", "页面 ${pageIndex + 1}"))
+                    .put("tiles", tiles))
+            }
+
             val scheme = JSONObject()
                 .put("desktopId", desktopId)
-                .put("version", version)
-                .put("hash", hash)
+                .put("version", gatewayScheme.optString("version", "0"))
+                .put("hash", gatewayScheme.optString("hash", ""))
                 .put("updatedAt", Instant.now().toString())
-                .put("pages", JSONArray()
-                    .put(JSONObject().put("name", "采集").put("tiles", JSONArray()
-                        .put(tile("录制", "solar:record-circle-bold-duotone", "rose"))
-                        .put(tile("场景", "solar:layers-bold-duotone", "sky"))
-                        .put(tile("麦克风", "solar:microphone-3-bold-duotone", "emerald"))
-                        .put(tile("标记", "solar:bookmark-bold-duotone", "amber"))))
-                    .put(JSONObject().put("name", "直播").put("tiles", JSONArray()
-                        .put(tile("聊天", "solar:chat-round-bold-duotone", "sky"))
-                        .put(tile("切片", "solar:video-frame-cut-bold-duotone", "fuchsia"))
-                        .put(tile("音乐", "solar:music-note-2-bold-duotone", "cyan"))
-                        .put(tile("暂停", "solar:pause-circle-bold-duotone", "violet")))))
+                .put("pages", mobilePages)
             prefs.edit().putString("scheme:$desktopId", scheme.toString()).apply()
         }
 

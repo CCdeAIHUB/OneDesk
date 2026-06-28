@@ -86,6 +86,56 @@ public sealed class PluginHostService : IDisposable
             : JsonSerializer.Deserialize<JsonElement>(line);
     }
 
+    public async Task<object?> SubmitSettingsAsync(string pluginId, object? settings, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_plugins.TryGetValue(pluginId, out var registration))
+        {
+            return new { ok = false, errorCode = "PluginNotInstalled", message = "插件未安装" };
+        }
+
+        if (!string.IsNullOrWhiteSpace(registration.PackageDirectory))
+        {
+            Directory.CreateDirectory(registration.PackageDirectory);
+            var settingsPath = Path.Combine(registration.PackageDirectory, "onedesk.settings.json");
+            await File.WriteAllTextAsync(settingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+        }
+
+        if (registration.Manifest.Backend is null)
+        {
+            _logs.Append("desktop", "Info", "Plugin", "Saved frontend-only plugin settings", new Dictionary<string, object?>
+            {
+                ["pluginId"] = pluginId
+            });
+            return new { ok = true, persisted = true, delivered = false };
+        }
+
+        var process = await EnsureProcessAsync(registration, cancellationToken);
+        var payload = new
+        {
+            jsonrpc = "2.0",
+            id = Interlocked.Increment(ref _rpcSequence),
+            method = "onedesk.configure",
+            @params = new
+            {
+                settings,
+                source = new { kind = "system" }
+            }
+        };
+
+        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
+        await process.StandardInput.FlushAsync();
+        var line = await process.StandardOutput.ReadLineAsync(cancellationToken);
+        _logs.Append("desktop", "Info", "Plugin", "Submitted plugin settings", new Dictionary<string, object?>
+        {
+            ["pluginId"] = pluginId
+        });
+
+        return string.IsNullOrWhiteSpace(line)
+            ? new { ok = true, persisted = true, delivered = false, message = "插件未返回设置响应" }
+            : JsonSerializer.Deserialize<JsonElement>(line);
+    }
+
     private Task<Process> EnsureProcessAsync(PluginRegistration registration, CancellationToken cancellationToken)
     {
         if (registration.Process is { HasExited: false } process)

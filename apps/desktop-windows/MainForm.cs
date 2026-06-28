@@ -53,6 +53,7 @@ public sealed class MainForm : Form
     private PluginHostService? _plugins;
     private StructuredLogStore? _logs;
     private Label? _loadingLabel;
+    private NotifyIcon? _notifyIcon;
     private readonly Dictionary<string, PendingPackageImport> _pendingPackageImports = new(StringComparer.OrdinalIgnoreCase);
 
     public MainForm()
@@ -216,6 +217,7 @@ public sealed class MainForm : Form
         if (disposing)
         {
             _loadingLabel?.Dispose();
+            _notifyIcon?.Dispose();
             _browser?.Dispose();
             _services?.Dispose();
         }
@@ -405,7 +407,11 @@ public sealed class MainForm : Form
             "callJsApi" => await HandleJsApiAsync(message),
             "workspace.list" => await HandleWorkspaceListAsync(message),
             "workspace.saveComponent" => await HandleSaveComponentAsync(message),
+            "workspace.readComponentFiles" => await HandleReadComponentFilesAsync(message),
+            "workspace.saveComponentFiles" => await HandleSaveComponentFilesAsync(message),
             "workspace.deleteComponent" => HandleDeleteComponent(message),
+            "workspace.saveAction" => await HandleSaveActionAsync(message),
+            "workspace.deleteAction" => HandleDeleteAction(message),
             "workspace.savePage" => await HandleSavePageAsync(message),
             "workspace.deletePage" => HandleDeletePage(message),
             "workspace.saveScheme" => await HandleSaveSchemeAsync(message),
@@ -436,6 +442,7 @@ public sealed class MainForm : Form
             "plugin.inspectImport" => HandleInspectPluginImport(message),
             "plugin.confirmImport" => await HandleConfirmPluginImportAsync(message),
             "plugin.import" => await HandlePluginImportAsync(message),
+            "plugin.submitSettings" => await HandlePluginSubmitSettingsAsync(message),
             "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
@@ -451,6 +458,21 @@ public sealed class MainForm : Form
 
     private async Task<BridgeResponse> HandleJsApiAsync(BridgeMessage message)
     {
+        if (message.Source?.Kind is "frontend" or null)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "InvalidSourceIdentity", "JSAPI 调用必须由可信组件、插件或系统运行容器注入来源身份");
+        }
+
+        if (message.Source?.Kind == "component" && (string.IsNullOrWhiteSpace(message.Source.ComponentId) || _repository is null || await _repository.GetComponentAsync(message.Source.ComponentId) is null))
+        {
+            return new BridgeResponse(message.RequestId, false, null, "InvalidSourceIdentity", "组件来源不存在，已拒绝 JSAPI 调用");
+        }
+
+        if (message.Source?.Kind == "plugin" && (string.IsNullOrWhiteSpace(message.Source.PluginId) || _plugins?.InstalledPlugins.Any(plugin => plugin.Id == message.Source.PluginId) != true))
+        {
+            return new BridgeResponse(message.RequestId, false, null, "InvalidSourceIdentity", "插件来源不存在，已拒绝 JSAPI 调用");
+        }
+
         var request = new JsApiRequest(
             message.RequestId,
             message.TargetDeviceId ?? _devices?.DesktopIdentity.DeviceId ?? "desktop",
@@ -468,7 +490,26 @@ public sealed class MainForm : Form
         }
 
         var result = await _jsApiRouter.RouteAsync(request);
+        if (result.Ok &&
+            request.Capability == "notification.native" &&
+            request.TargetDeviceId == (_devices?.DesktopIdentity.DeviceId ?? "desktop"))
+        {
+            ShowNativeNotification(request.Payload);
+        }
         return new BridgeResponse(message.RequestId, result.Ok, result.Payload, result.ErrorCode, result.Message);
+    }
+
+    private void ShowNativeNotification(object? payload)
+    {
+        var title = ReadJsonString(payload, "title", "OneDesk");
+        var message = ReadJsonString(payload, "message", "OneDesk 通知");
+        _notifyIcon ??= new NotifyIcon
+        {
+            Icon = Icon,
+            Visible = true,
+            Text = "OneDesk"
+        };
+        _notifyIcon.ShowBalloonTip(4000, title, message, ToolTipIcon.Info);
     }
 
     private async Task<BridgeResponse> HandleWorkspaceListAsync(BridgeMessage message)
@@ -507,6 +548,53 @@ public sealed class MainForm : Form
         return new BridgeResponse(message.RequestId, true, component);
     }
 
+    private async Task<BridgeResponse> HandleReadComponentFilesAsync(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _repository.ReadComponentFilesAsync(id));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ComponentFileReadFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleSaveComponentFilesAsync(BridgeMessage message)
+    {
+        var payload = DeserializePayload<ComponentFilesPayload>(message);
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (payload is null || string.IsNullOrWhiteSpace(payload.Id))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            await _repository.SaveComponentFilesAsync(payload.Id, payload.Files);
+            return new BridgeResponse(message.RequestId, true, await _repository.ReadComponentFilesAsync(payload.Id));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ComponentFileSaveFailed", ex.Message);
+        }
+    }
+
     private BridgeResponse HandleDeleteComponent(BridgeMessage message)
     {
         var id = ReadPayloadString(message, "id");
@@ -521,6 +609,40 @@ public sealed class MainForm : Form
         }
 
         _repository.DeleteComponent(id);
+        return new BridgeResponse(message.RequestId, true, null);
+    }
+
+    private async Task<BridgeResponse> HandleSaveActionAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var action = DeserializePayload<ActionDefinition>(message);
+        if (action is null)
+        {
+            return InvalidPayload(message);
+        }
+
+        await _repository.SaveActionAsync(action);
+        return new BridgeResponse(message.RequestId, true, action);
+    }
+
+    private BridgeResponse HandleDeleteAction(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        _repository.DeleteAction(id);
         return new BridgeResponse(message.RequestId, true, null);
     }
 
@@ -605,8 +727,9 @@ public sealed class MainForm : Form
             return new BridgeResponse(message.RequestId, false, null, "SchemeNotFound", "方案不存在，无法应用");
         }
 
-        await _repository.ApplySchemeAsync(id);
-        return new BridgeResponse(message.RequestId, true, await _repository.GetActiveSchemeAsync());
+        var deviceId = ReadPayloadString(message, "deviceId");
+        await _repository.ApplySchemeAsync(id, string.IsNullOrWhiteSpace(deviceId) ? null : deviceId);
+        return new BridgeResponse(message.RequestId, true, await _repository.GetActiveSchemeAsync(deviceId));
     }
 
     private async Task<BridgeResponse> HandleExportComponentAsync(BridgeMessage message)
@@ -1162,6 +1285,33 @@ public sealed class MainForm : Form
         return manifest;
     }
 
+    private async Task<BridgeResponse> HandlePluginSubmitSettingsAsync(BridgeMessage message)
+    {
+        if (_plugins is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var pluginId = ReadPayloadString(message, "pluginId");
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            var settings = message.Payload is { ValueKind: JsonValueKind.Object } payload && payload.TryGetProperty("settings", out var value)
+                ? value
+                : default(JsonElement?);
+            var result = await _plugins.SubmitSettingsAsync(pluginId, settings);
+            return new BridgeResponse(message.RequestId, true, result);
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "PluginSettingsFailed", ex.Message);
+        }
+    }
+
     private BridgeResponse HandlePairingGenerate(BridgeMessage message)
     {
         if (_pairing is null)
@@ -1327,6 +1477,19 @@ public sealed class MainForm : Form
         return fallback;
     }
 
+    private static string ReadJsonString(object? payload, string key, string fallback)
+    {
+        if (payload is JsonElement element &&
+            element.ValueKind == JsonValueKind.Object &&
+            element.TryGetProperty(key, out var value) &&
+            value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString() ?? fallback;
+        }
+
+        return fallback;
+    }
+
     private static IReadOnlyList<string> ReadPayloadStringArray(BridgeMessage message, string key)
     {
         if (message.Payload is not { ValueKind: JsonValueKind.Object } payload ||
@@ -1425,6 +1588,22 @@ public sealed class MainForm : Form
         source: { kind: 'frontend' }
       });
     },
+    callComponentJsApi(componentId, targetDeviceId, capability, payloadJson) {
+      return send('callJsApi', {
+        targetDeviceId,
+        capability,
+        payload: payloadJson ? JSON.parse(payloadJson) : null,
+        source: { kind: 'component', componentId }
+      });
+    },
+    callPluginJsApi(pluginId, targetDeviceId, capability, payloadJson) {
+      return send('callJsApi', {
+        targetDeviceId,
+        capability,
+        payload: payloadJson ? JSON.parse(payloadJson) : null,
+        source: { kind: 'plugin', pluginId }
+      });
+    },
     listWorkspace() {
       return send('workspace.list');
     },
@@ -1506,4 +1685,8 @@ public sealed class MainForm : Form
         IReadOnlyList<PermissionDeclaration> Permissions,
         IReadOnlyList<DependencyDefinition> PluginDependencies,
         IReadOnlyDictionary<string, IReadOnlyList<string>> SourceKeys);
+
+    private sealed record ComponentFilesPayload(
+        string Id,
+        IReadOnlyDictionary<string, string> Files);
 }

@@ -2,7 +2,7 @@
 import { Icon } from "@iconify/vue";
 import { computed, onMounted, ref } from "vue";
 import QRCode from "qrcode";
-import type { ComponentDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
+import type { ActionDefinition, ComponentDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, sendShell, setShellTheme, startWindowDrag } from "./nativeBridge";
 
@@ -57,6 +57,7 @@ const componentCodeFiles = computed(() => [
   { path: "onedesk.visual.json", icon: "solar:palette-bold-duotone" },
 ]);
 const selectedCell = computed(() => selectedPage.value?.cells.find((cell) => cell.id === selectedCellId.value) ?? selectedPage.value?.cells[0] ?? null);
+const selectedComponentActions = computed(() => workspace.actions.filter((action) => selectedComponent.value?.actionIds.includes(action.id)));
 
 onMounted(async () => {
   setTheme(theme.value);
@@ -99,11 +100,11 @@ function handleWindowDrag(event: PointerEvent) {
   void startWindowDrag();
 }
 
-function chooseComponent(component: ComponentDefinition) {
+async function chooseComponent(component: ComponentDefinition) {
   workspace.selectedComponentId = component.id;
   componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
   componentCodeDraft.value = generatedComponentCode(component);
-  hydrateCodeFiles(component);
+  await loadComponentFiles(component);
   componentRoute.value = "editor";
 }
 
@@ -161,6 +162,7 @@ async function createComponent() {
   componentEditorMode.value = "visual";
   componentCodeDraft.value = generatedComponentCode(component);
   hydrateCodeFiles(component);
+  await sendShell("workspace.saveComponentFiles", { id, files: codeFileDrafts.value });
   componentRoute.value = "editor";
 }
 
@@ -276,8 +278,36 @@ async function saveComponent() {
     selectedComponent.value.visualConfigFile = null;
   }
   const response = await sendShell<ComponentDefinition>("workspace.saveComponent", selectedComponent.value);
-  workspace.toast = response.ok ? "组件已保存" : response.message ?? "组件保存失败";
+  const fileResponse = await sendShell<Record<string, string>>("workspace.saveComponentFiles", { id: selectedComponent.value.id, files: codeFileDrafts.value });
+  workspace.toast = response.ok && fileResponse.ok ? "组件与代码文件已保存" : response.message ?? fileResponse.message ?? "组件保存失败";
   await loadWorkspace();
+}
+
+async function addComponentAction() {
+  if (!selectedComponent.value) return;
+  const triggerBase = "tap";
+  const used = new Set(selectedComponentActions.value.map((action) => action.trigger.id));
+  const triggerId = used.has(triggerBase) ? `tap-${Date.now()}` : triggerBase;
+  const action: ActionDefinition = {
+    id: `action-${crypto.randomUUID()}`,
+    name: "新动作",
+    trigger: { id: triggerId, category: "touch.standard", displayName: used.has(triggerBase) ? "点击（新）" : "点击", fingerCount: 1 },
+    invocations: [{ targetDeviceId: "desktop", capability: "notification.native", parameters: { title: "OneDesk", message: "动作已触发" } }],
+  };
+  const actionResponse = await sendShell<ActionDefinition>("workspace.saveAction", action);
+  if (!actionResponse.ok) {
+    workspace.toast = actionResponse.message ?? "动作保存失败";
+    return;
+  }
+  selectedComponent.value.actionIds = [...selectedComponent.value.actionIds, action.id];
+  await saveComponent();
+}
+
+async function removeComponentAction(actionId: string) {
+  if (!selectedComponent.value) return;
+  selectedComponent.value.actionIds = selectedComponent.value.actionIds.filter((id) => id !== actionId);
+  await sendShell("workspace.deleteAction", { id: actionId });
+  await saveComponent();
 }
 
 function generatedComponentCode(component?: ComponentDefinition) {
@@ -299,6 +329,20 @@ function hydrateCodeFiles(component?: ComponentDefinition) {
     }, null, 2),
   };
   componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value];
+}
+
+async function loadComponentFiles(component?: ComponentDefinition) {
+  hydrateCodeFiles(component);
+  if (!component?.id) return;
+  const response = await sendShell<Record<string, string>>("workspace.readComponentFiles", { id: component.id });
+  if (response.ok && response.payload && Object.keys(response.payload).length) {
+    codeFileDrafts.value = {
+      ...codeFileDrafts.value,
+      ...response.payload,
+    };
+    selectedCodeFile.value = codeFileDrafts.value["src/Component.vue"] ? "src/Component.vue" : Object.keys(codeFileDrafts.value)[0] ?? "src/Component.vue";
+    componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value] ?? "";
+  }
 }
 
 function selectCodeFile(path: string) {
@@ -347,6 +391,26 @@ function handleAddSchemePage(event: Event) {
   if (!select) return;
   addPageToScheme(select.value);
   select.value = "";
+}
+
+function addSchemeEdge() {
+  if (!selectedScheme.value || selectedScheme.value.pageIds.length < 2) return;
+  const fromPageId = selectedScheme.value.pageIds[0];
+  const toPageId = selectedScheme.value.pageIds[1];
+  selectedScheme.value.edges = [
+    ...selectedScheme.value.edges,
+    {
+      fromPageId,
+      toPageId,
+      trigger: { id: `edge-swipe-${Date.now()}`, category: "touch.standard", displayName: "三指横滑", fingerCount: 3 },
+      animation: "fade",
+    },
+  ];
+}
+
+function removeSchemeEdge(index: number) {
+  if (!selectedScheme.value) return;
+  selectedScheme.value.edges = selectedScheme.value.edges.filter((_, edgeIndex) => edgeIndex !== index);
 }
 
 async function importWorkspace(kind: "Component" | "Page" | "Scheme") {
@@ -447,6 +511,12 @@ function pluginSettingFields(plugin?: PluginManifest | null) {
 function pluginDraft(plugin: PluginManifest) {
   pluginSettingsDraft.value[plugin.id] ??= {};
   return pluginSettingsDraft.value[plugin.id];
+}
+
+async function savePluginSettings(plugin?: PluginManifest | null) {
+  if (!plugin) return;
+  const response = await sendShell("plugin.submitSettings", { pluginId: plugin.id, settings: pluginDraft(plugin) });
+  workspace.toast = response.ok ? "插件设置已提交" : response.message ?? "插件设置提交失败";
 }
 </script>
 
@@ -568,7 +638,7 @@ function pluginDraft(plugin: PluginManifest) {
               <div class="mb-4 flex items-center justify-between gap-3"><div class="flex rounded-full bg-white p-1 text-[12px] shadow-sm dark:bg-slate-900"><button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'visual' ? 'bg-sky-500 text-white' : ''" @click="componentEditorMode = 'visual'">可视化</button><button class="rounded-full px-3 py-1.5" :class="componentEditorMode === 'code' ? 'bg-sky-500 text-white' : ''" @click="requestCodeMode">代码</button></div><input v-if="selectedComponent" v-model="selectedComponent.name" class="field min-w-0 flex-1" placeholder="组件名称" /><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportComponent(selectedComponent)">导出组件</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="saveComponent">保存</button></div></div>
               <div v-if="componentEditorMode === 'visual'" class="grid gap-3">
                 <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">样式配置</h3><div class="mt-3 grid grid-cols-4 gap-2 text-[12px]"><select class="field"><option>渐变背景</option><option>纯色背景</option><option>图片背景</option><option>视频背景</option></select><input class="field" value="圆角 16" /><input class="field" value="边距 8" /><select class="field"><option>居中</option><option>靠左</option><option>靠右</option><option>靠下</option></select><input v-if="selectedComponent" v-model="selectedComponent.name" class="field" placeholder="显示文字" /><input class="field" value="字号 14" /><input class="field" value="#0ea5e9" /><select class="field"><option>按下缩小</option><option>按下高亮</option></select></div><p class="mt-3 text-[11px] text-slate-500">保存时会保留可视化配置文件标记，切换代码编辑后将不可回退。</p></div>
-                <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><div class="mb-3 flex items-center justify-between"><h3 class="text-[13px] font-semibold">动作配置</h3><button class="text-[12px] text-sky-600">添加动作</button></div><div class="grid gap-2 text-[12px]"><div v-for="actionId in selectedComponent?.actionIds" :key="actionId" class="grid grid-cols-[120px_1fr_80px] rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><span>{{ workspace.actions.find((action) => action.id === actionId)?.trigger.displayName ?? '未设置' }}</span><span>{{ workspace.actions.find((action) => action.id === actionId)?.name ?? actionId }}</span><span class="text-right text-green-600">已授权</span></div></div></div>
+                <div class="rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900"><div class="mb-3 flex items-center justify-between"><h3 class="text-[13px] font-semibold">动作配置</h3><button class="text-[12px] text-sky-600" @click="addComponentAction">添加动作</button></div><div class="grid gap-2 text-[12px]"><div v-for="action in selectedComponentActions" :key="action.id" class="grid grid-cols-[100px_1fr_88px] items-center rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><span>{{ action.trigger.displayName }}</span><input v-model="action.name" class="field h-8" @change="sendShell('workspace.saveAction', action)" /><button class="text-right text-rose-500" @click="removeComponentAction(action.id)">删除</button></div><p v-if="!selectedComponentActions.length" class="rounded-xl bg-slate-50 px-3 py-3 text-slate-500 dark:bg-slate-800">暂无动作。添加后会保存为动作定义，并绑定到当前组件。</p></div></div>
               </div>
               <div v-else class="overflow-hidden rounded-[18px] bg-slate-950"><div class="flex h-9 items-center border-b border-slate-800 px-4 text-[12px] text-slate-400">{{ selectedCodeFile }}</div><textarea v-model="componentCodeDraft" class="scrollable h-[390px] w-full resize-none overflow-auto bg-slate-950 p-4 font-mono text-[12px] leading-6 text-sky-100 outline-none" data-no-window-drag spellcheck="false"></textarea></div>
             </section>
@@ -591,8 +661,8 @@ function pluginDraft(plugin: PluginManifest) {
           </section>
 
           <section v-else-if="activeView === 'scheme'" class="soft-card h-full p-5">
-            <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="schemeRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回方案管理</button><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportScheme(selectedScheme)">导出方案</button><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="saveScheme">保存方案</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="selectedScheme && applyScheme(selectedScheme.id)">应用方案</button></div></div>
-            <div class="grid h-[calc(100%-42px)] grid-cols-[280px_1fr] gap-5"><aside class="scrollable overflow-auto rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag><input v-if="selectedScheme" v-model="selectedScheme.name" class="field w-full text-[15px] font-semibold" placeholder="方案名称" /><select class="field mt-4 w-full text-[12px]" @change="handleAddSchemePage"><option value="">添加页面到方案</option><option v-for="page in workspace.pages.filter((page) => !selectedScheme?.pageIds.includes(page.id))" :key="page.id" :value="page.id">{{ page.name }}</option></select><div class="mt-4 grid gap-2 text-[12px]"><div v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><div class="font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</div><div class="mt-2 flex gap-1"><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, -1)">上移</button><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, 1)">下移</button><button class="card-action danger h-7 flex-1" @click="removePageFromScheme(pageId)">删除</button></div></div></div><div class="mt-4 grid gap-2 text-[12px]"><h3 class="text-[13px] font-semibold">全局切换</h3><select v-if="selectedScheme" v-model="selectedScheme.globalPrevious.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select><select v-if="selectedScheme" v-model="selectedScheme.globalNext.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select></div></aside><div class="rounded-[22px] bg-white p-5 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">页面流程</h3><div class="mt-5 flex items-center gap-3 overflow-auto pb-2" data-no-window-drag><template v-for="(pageId, index) in selectedScheme?.pageIds" :key="pageId"><div class="min-w-[132px] rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700"><Icon icon="solar:smartphone-bold-duotone" class="mx-auto size-8 text-sky-500" /><p class="mt-2 text-[13px] font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</p></div><div v-if="index < (selectedScheme?.pageIds.length ?? 0) - 1" class="min-w-[96px] text-center text-[11px] text-slate-500"><Icon icon="solar:alt-arrow-right-linear" class="mx-auto size-5" /><p>{{ selectedScheme?.globalNext.trigger.displayName }}</p><p>{{ selectedScheme?.globalNext.animation }}</p></div></template></div><div class="mt-5 grid gap-2 text-[12px] text-slate-500"><p>全局上一页：{{ selectedScheme?.globalPrevious.trigger.displayName }} / {{ selectedScheme?.globalPrevious.animation }}</p><p>全局下一页：{{ selectedScheme?.globalNext.trigger.displayName }} / {{ selectedScheme?.globalNext.animation }}</p><p v-for="edge in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}`">{{ edge.fromPageId }} -> {{ edge.toPageId }}：{{ edge.trigger.displayName }} / {{ edge.animation }}</p></div></div></div>
+            <div class="mb-4 flex items-center justify-between"><button class="flex items-center gap-2 text-[12px] text-sky-600" @click="schemeRoute = 'manager'"><Icon icon="solar:alt-arrow-left-linear" class="size-4" />返回方案管理</button><div class="flex gap-2"><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="exportScheme(selectedScheme)">导出方案</button><button class="rounded-full bg-white px-4 py-2 text-[12px] font-medium text-sky-600 shadow-sm dark:bg-slate-900" @click="saveScheme">保存方案</button><button class="rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="selectedScheme && applyScheme(selectedScheme.id, selectedDeviceId || undefined)">应用方案</button></div></div>
+            <div class="grid h-[calc(100%-42px)] grid-cols-[280px_1fr] gap-5"><aside class="scrollable overflow-auto rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag><input v-if="selectedScheme" v-model="selectedScheme.name" class="field w-full text-[15px] font-semibold" placeholder="方案名称" /><select class="field mt-4 w-full text-[12px]" @change="handleAddSchemePage"><option value="">添加页面到方案</option><option v-for="page in workspace.pages.filter((page) => !selectedScheme?.pageIds.includes(page.id))" :key="page.id" :value="page.id">{{ page.name }}</option></select><div class="mt-4 grid gap-2 text-[12px]"><div v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800"><div class="font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</div><div class="mt-2 flex gap-1"><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, -1)">上移</button><button class="card-action h-7 flex-1" @click="moveSchemePage(pageId, 1)">下移</button><button class="card-action danger h-7 flex-1" @click="removePageFromScheme(pageId)">删除</button></div></div></div><div class="mt-4 grid gap-2 text-[12px]"><h3 class="text-[13px] font-semibold">全局切换</h3><select v-if="selectedScheme" v-model="selectedScheme.globalPrevious.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select><select v-if="selectedScheme" v-model="selectedScheme.globalNext.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select></div><div class="mt-4 grid gap-2 text-[12px]"><div class="flex items-center justify-between"><h3 class="text-[13px] font-semibold">页面跳转边</h3><button class="text-sky-600" @click="addSchemeEdge">新增边</button></div><div v-for="(edge, index) in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}-${index}`" class="grid gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800"><select v-model="edge.fromPageId" class="field"><option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option></select><select v-model="edge.toPageId" class="field"><option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option></select><input v-model="edge.trigger.displayName" class="field" /><select v-model="edge.animation" class="field"><option value="fade">渐入渐退</option><option value="slide">滑动</option><option value="none">无动画</option></select><button class="card-action danger" @click="removeSchemeEdge(index)">删除边</button></div></div></aside><div class="rounded-[22px] bg-white p-5 shadow-sm dark:bg-slate-900"><h3 class="text-[13px] font-semibold">页面流程</h3><div class="mt-5 flex items-center gap-3 overflow-auto pb-2" data-no-window-drag><template v-for="(pageId, index) in selectedScheme?.pageIds" :key="pageId"><div class="min-w-[132px] rounded-2xl border border-slate-200 p-4 text-center dark:border-slate-700"><Icon icon="solar:smartphone-bold-duotone" class="mx-auto size-8 text-sky-500" /><p class="mt-2 text-[13px] font-semibold">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</p></div><div v-if="index < (selectedScheme?.pageIds.length ?? 0) - 1" class="min-w-[96px] text-center text-[11px] text-slate-500"><Icon icon="solar:alt-arrow-right-linear" class="mx-auto size-5" /><p>{{ selectedScheme?.globalNext.trigger.displayName }}</p><p>{{ selectedScheme?.globalNext.animation }}</p></div></template></div><div class="mt-5 grid gap-2 text-[12px] text-slate-500"><p>全局上一页：{{ selectedScheme?.globalPrevious.trigger.displayName }} / {{ selectedScheme?.globalPrevious.animation }}</p><p>全局下一页：{{ selectedScheme?.globalNext.trigger.displayName }} / {{ selectedScheme?.globalNext.animation }}</p><p v-for="edge in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}`">{{ edge.fromPageId }} -> {{ edge.toPageId }}：{{ edge.trigger.displayName }} / {{ edge.animation }}</p></div></div></div>
           </section>
 
           <section v-else class="soft-card scrollable h-full overflow-auto p-5" data-no-window-drag>
@@ -610,7 +680,7 @@ function pluginDraft(plugin: PluginManifest) {
                   <h3 class="text-[15px] font-semibold">{{ selectedPlugin.name }}</h3>
                   <p class="mt-1 text-[12px] text-slate-500">{{ selectedPlugin.id }} · {{ selectedPlugin.version }}</p>
                   <div class="mt-4 grid gap-2">
-                    <h4 class="text-[13px] font-semibold">设置表单</h4>
+                    <div class="flex items-center justify-between"><h4 class="text-[13px] font-semibold">设置表单</h4><button class="rounded-full bg-sky-500 px-3 py-1.5 text-[12px] font-medium text-white" @click="savePluginSettings(selectedPlugin)">保存设置</button></div>
                     <div v-if="pluginSettingFields(selectedPlugin).length" class="grid gap-2">
                       <label v-for="field in pluginSettingFields(selectedPlugin)" :key="field.key" class="grid gap-1 text-[12px] font-medium">
                         {{ field.title }}

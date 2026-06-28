@@ -1,5 +1,6 @@
 namespace OneDesk.Desktop.Services;
 
+using System.Diagnostics;
 using System.Text.Json;
 using OneDesk.Desktop.Storage;
 
@@ -84,6 +85,8 @@ public sealed class JsApiRouter
             "plugin.invoke" => await InvokePluginAsync(request, cancellationToken),
             "notification.native" => Notify(request),
             "notification.inApp" => JsApiResult.Success(request.Payload),
+            "process.list" => ListProcesses(),
+            "network.access" => await NetworkAccessAsync(request, cancellationToken),
             "clipboard.read" or "clipboard.write" => JsApiResult.Error("CapabilityPlatformHandlerMissing", "Clipboard access must be executed by the platform shell handler."),
             "file.readExternal" or "file.writeExternal" or "file.deleteExternal" => JsApiResult.Error("CapabilityRequiresUserPath", "External file access requires an explicit user-selected path and permission grant."),
             _ => JsApiResult.Error("CapabilityNotSupported", "This capability is registered but does not have a desktop local handler yet.")
@@ -181,6 +184,63 @@ public sealed class JsApiRouter
         var parameters = ReadElement(request.Payload, "parameters");
         var result = await _plugins.InvokeAsync(pluginId, method, parameters, cancellationToken);
         return JsApiResult.Success(result);
+    }
+
+    private static JsApiResult ListProcesses()
+    {
+        var processes = Process.GetProcesses()
+            .OrderBy(process => process.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .Take(512)
+            .Select(process =>
+            {
+                try
+                {
+                    return new
+                    {
+                        process.Id,
+                        Name = process.ProcessName,
+                        process.MainWindowTitle
+                    };
+                }
+                catch
+                {
+                    return new
+                    {
+                        Id = process.Id,
+                        Name = process.ProcessName,
+                        MainWindowTitle = ""
+                    };
+                }
+            })
+            .ToArray();
+        return JsApiResult.Success(processes);
+    }
+
+    private static async Task<JsApiResult> NetworkAccessAsync(JsApiRequest request, CancellationToken cancellationToken)
+    {
+        var url = ReadString(request.Payload, "url", "");
+        var method = ReadString(request.Payload, "method", "GET").ToUpperInvariant();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        {
+            return JsApiResult.Error("InvalidPayload", "network.access requires an absolute http or https URL.");
+        }
+
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        using var httpRequest = new HttpRequestMessage(new HttpMethod(method), uri);
+        var body = ReadString(request.Payload, "body", "");
+        if (method is "POST" or "PUT" or "PATCH")
+        {
+            httpRequest.Content = new StringContent(body);
+        }
+
+        using var response = await client.SendAsync(httpRequest, cancellationToken);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        return JsApiResult.Success(new
+        {
+            status = (int)response.StatusCode,
+            response.ReasonPhrase,
+            body = text.Length > 256_000 ? text[..256_000] : text
+        });
     }
 
     private JsApiResult ResolvePrivateFile(JsApiRequest request)

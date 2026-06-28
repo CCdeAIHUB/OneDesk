@@ -17,6 +17,8 @@ declare global {
   interface Window {
     OneDeskNative?: {
       callJsApi?: (targetDeviceId: string, capability: string, payloadJson: string) => string | Promise<string>;
+      callComponentJsApi?: (componentId: string, targetDeviceId: string, capability: string, payloadJson: string) => string | Promise<string>;
+      callPluginJsApi?: (pluginId: string, targetDeviceId: string, capability: string, payloadJson: string) => string | Promise<string>;
       getDeviceId?: () => string | Promise<string>;
       minimizeWindow?: () => string | Promise<string>;
       maximizeWindow?: () => string | Promise<string>;
@@ -26,6 +28,42 @@ declare global {
       send?: (type: string, payloadJson?: string) => string | Promise<string>;
     };
   }
+}
+
+export async function callComponentNative<T = unknown>(componentId: string, request: NativeBridgeRequest): Promise<NativeBridgeResponse<T>> {
+  if (!window.OneDeskNative?.callComponentJsApi) {
+    return {
+      ok: false,
+      errorCode: "CapabilityNotSupported",
+      message: "当前预览环境未连接 OneDesk 壳子",
+    };
+  }
+
+  const raw = await window.OneDeskNative.callComponentJsApi(
+    componentId,
+    request.targetDeviceId,
+    request.capability,
+    JSON.stringify(request.payload),
+  );
+  return JSON.parse(raw) as NativeBridgeResponse<T>;
+}
+
+export async function callPluginNative<T = unknown>(pluginId: string, request: NativeBridgeRequest): Promise<NativeBridgeResponse<T>> {
+  if (!window.OneDeskNative?.callPluginJsApi) {
+    return {
+      ok: false,
+      errorCode: "CapabilityNotSupported",
+      message: "当前预览环境未连接 OneDesk 壳子",
+    };
+  }
+
+  const raw = await window.OneDeskNative.callPluginJsApi(
+    pluginId,
+    request.targetDeviceId,
+    request.capability,
+    JSON.stringify(request.payload),
+  );
+  return JSON.parse(raw) as NativeBridgeResponse<T>;
 }
 
 export async function callNative<T = unknown>(request: NativeBridgeRequest): Promise<NativeBridgeResponse<T>> {

@@ -65,7 +65,7 @@ const deviceId = ref("android-preview");
 const desktops = ref<KnownDesktop[]>([]);
 const cachedScheme = ref<CachedScheme | null>(null);
 
-const pages = computed<CachedPage[]>(() => cachedScheme.value?.pages ?? [
+const fallbackPages: CachedPage[] = [
   {
     name: "预览",
     tiles: [
@@ -75,7 +75,8 @@ const pages = computed<CachedPage[]>(() => cachedScheme.value?.pages ?? [
       { label: "标记", icon: "solar:bookmark-bold-duotone", accent: "amber" },
     ],
   },
-]);
+];
+const pages = computed<CachedPage[]>(() => cachedScheme.value?.pages.length ? cachedScheme.value.pages : fallbackPages);
 const currentPage = computed(() => pages.value[activePage.value] ?? pages.value[0]);
 
 onMounted(() => {
@@ -156,9 +157,13 @@ function connectKnown(desktop: KnownDesktop) {
   host.value = desktop.host;
   port.value = desktop.port;
   code.value = "000000";
-  loadScheme(desktop.desktopId);
-  connected.value = true;
-  toast.value = desktop.trusted ? "已使用长期信任凭据连接" : "需要重新输入验证码";
+  if (!desktop.trusted) {
+    toast.value = "需要重新输入验证码";
+    return;
+  }
+  updating.value = true;
+  updateProgress.value = 45;
+  window.setTimeout(() => finishConnect(), 120);
 }
 
 function nextPage() {

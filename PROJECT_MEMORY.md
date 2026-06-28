@@ -34,7 +34,10 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Component/page/scheme export currently writes packages to `%LOCALAPPDATA%\OneDesk\exports`; component export includes actions, page export includes referenced components/actions, and scheme export includes referenced pages/components/actions plus a plugin dependency report.
 - Permission grants are persisted in `%LOCALAPPDATA%\OneDesk\permission-grants.json`.
 - Structured desktop logs are stored as JSONL files under `%LOCALAPPDATA%\OneDesk\logs`.
-- QUIC gateway service state and routing scaffolding are present and start locally, but the real MsQuic transport loop is not yet fully attached. This must not be treated as completed device communication.
+- Gateway service now starts a real UDP JSON listener on port 48320 for desktop/mobile pairing, trusted reconnect, mobile disconnected-log upload, and scheme snapshot retrieval. This is a usable LAN transport prototype, but it is still not MsQuic and must not be treated as final QUIC compliance.
+- Desktop identity is persisted under `%LOCALAPPDATA%\OneDesk\desktop-identity.json`.
+- Trusted mobile pairing credentials are persisted under `%LOCALAPPDATA%\OneDesk\trusted-devices.json`, so a paired mobile can reconnect without a new six-digit code after desktop restart.
+- Scheme application can now be stored per mobile device, with the legacy global active scheme kept as a fallback. Mobile gateway responses use the requesting mobile device ID to select the scheme snapshot.
 - Desktop UI has Chinese-only visible text, card-based component/page/scheme management, device management dialog with selectable trusted mobile devices, vertical theme selector, custom window controls, transparent/frosted shell background, and opaque content cards/nav surfaces.
 - Desktop device management must not show the desktop client itself as a managed device. The desktop shows local LAN IP, QUIC port, verification code, QR payload, and a generated QR image so mobile clients initiate pairing. Real mobile pairing still depends on completing the QUIC transport loop.
 - The desktop device selector displays the currently selected/trusted mobile device icon and name. If a mobile device has a remark, UI should display the remark.
@@ -42,11 +45,14 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Component/page/scheme management pages require both import and create actions.
 - Scrollable areas and scrollbars must not trigger native window dragging.
 - Component import, page import, scheme import, and plugin import now use a two-step UI flow: inspect selected package manifest, show requested permissions and high-risk flags, allow the user to adjust grants, then confirm import. This is implemented for manifest-based grants, but dependency conflict resolution still needs a full user choice flow.
-- Desktop component code editing now has a file-tree style UI with multiple draft files. Persisting arbitrary edited file contents as real component project files is still incomplete.
+- Desktop component code editing now has a file-tree style UI with multiple draft files, and arbitrary edited file contents can be saved/read as real component project files under the component directory.
 - Page editing now supports selecting grid cells, setting span, binding components, and editing cell outline/radius in the UI.
-- Scheme editing now supports adding/removing/reordering pages and editing global animation values in the UI. Full edge editing for page-specific switching remains incomplete.
-- Plugin import uses safe zip extraction limits for the new confirmed import path and the legacy bridge path. Plugin settings schema can be rendered as a basic JSON Schema form for string, number, integer, and boolean fields, but settings persistence/submission back to the plugin is still incomplete.
-- Android frontend no longer simulates a successful connection when the native shell bridge is absent. Android native connection still does not perform real QUIC pairing.
+- Scheme editing now supports adding/removing/reordering pages, editing global animation values, and editing page-specific switching edges in the UI.
+- Plugin import uses safe zip extraction limits for the new confirmed import path and the legacy bridge path. Plugin settings schema can be rendered as a basic JSON Schema form for string, number, integer, and boolean fields; settings are persisted to the plugin package and submitted to backend plugins through `onedesk.configure` when a backend process exists.
+- Android frontend no longer simulates a successful connection when the native shell bridge is absent. Android native shell now performs UDP JSON pairing/trusted reconnect against the desktop gateway, uploads disconnected logs, stores assigned mobile ID/trust credential, and caches the received scheme snapshot. This is not yet MsQuic.
+- Android Gradle wrapper is included, and local validation has produced a debug APK with the temporary JDK/Android SDK toolchain installed under `%LOCALAPPDATA%\OneDeskBuildTools`.
+- Desktop JSAPI rejects calls whose source identity is freely declared as `frontend`; component/plugin source wrappers exist and are validated against known component/plugin IDs. Full trusted runtime injection inside isolated component/plugin execution containers remains incomplete.
+- Cross-device JSAPI forwarding currently validates online target state and queues/logs the request in the desktop gateway; request delivery to a live mobile runtime and response return are still incomplete.
 
 ## Product Summary
 

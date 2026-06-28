@@ -118,6 +118,7 @@ export interface SchemeDefinition {
 export interface ActiveSchemeState {
   schemeId: string;
   appliedAt: string;
+  deviceId?: string | null;
 }
 
 export interface DeviceIdentity {
