@@ -568,7 +568,7 @@ async function openDeviceDialog(generateCode = false) {
   showDeviceMenu.value = false;
   showDeviceDialog.value = true;
   if (!pairing.value || generateCode) {
-    const response = await sendShell<{ code: string; qrPayload: string; expiresInSeconds: number; host?: string; port?: number; localIps?: string[] }>("pairing.generate", { port: 48320 });
+    const response = await sendShell<{ code: string; qrPayload: string; expiresInSeconds: number; host?: string; port?: number; localIps?: string[] }>("pairing.generate", { port: connectionPort.value });
     if (response.ok && response.payload) {
       pairing.value = response.payload;
       pairingQrDataUrl.value = await QRCode.toDataURL(response.payload.qrPayload, { margin: 1, width: 168, color: { dark: "#020617", light: "#ffffff" } });
