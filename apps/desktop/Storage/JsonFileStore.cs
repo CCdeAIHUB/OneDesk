@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace OneDesk.Desktop.Storage;
 
@@ -9,6 +10,11 @@ public sealed class JsonFileStore
     {
         WriteIndented = true
     };
+
+    public JsonFileStore()
+    {
+        _jsonOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+    }
 
     public async Task SaveAsync<T>(string path, T value, CancellationToken cancellationToken = default)
     {

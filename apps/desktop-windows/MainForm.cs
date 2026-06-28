@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Web.WebView2.Core;
@@ -486,73 +487,116 @@ public sealed class MainForm : Form
 
     private async void Browser_OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        using var document = JsonDocument.Parse(e.WebMessageAsJson);
-        if (document.RootElement.TryGetProperty("type", out var typeElement) &&
-            typeElement.GetString() == "diagnostic.error")
+        string? requestId = null;
+        try
         {
-            AppDiagnostics.Write($"Frontend error: {e.WebMessageAsJson}");
-            return;
-        }
-
-        var message = JsonSerializer.Deserialize<BridgeMessage>(e.WebMessageAsJson, JsonOptions);
-        if (message is null)
-        {
-            return;
-        }
-
-        object response = message.Type switch
-        {
-            "getDeviceId" => new BridgeResponse(message.RequestId, true, _devices?.DesktopIdentity.DeviceId),
-            "callJsApi" => await HandleJsApiAsync(message),
-            "workspace.list" => await HandleWorkspaceListAsync(message),
-            "workspace.saveComponent" => await HandleSaveComponentAsync(message),
-            "workspace.readComponentFiles" => await HandleReadComponentFilesAsync(message),
-            "workspace.saveComponentFiles" => await HandleSaveComponentFilesAsync(message),
-            "workspace.deleteComponent" => HandleDeleteComponent(message),
-            "workspace.saveAction" => await HandleSaveActionAsync(message),
-            "workspace.deleteAction" => HandleDeleteAction(message),
-            "workspace.savePage" => await HandleSavePageAsync(message),
-            "workspace.deletePage" => HandleDeletePage(message),
-            "workspace.saveScheme" => await HandleSaveSchemeAsync(message),
-            "workspace.deleteScheme" => HandleDeleteScheme(message),
-            "workspace.applyScheme" => await HandleApplySchemeAsync(message),
-            "workspace.exportComponent" => await HandleExportComponentAsync(message),
-            "workspace.exportPage" => await HandleExportPageAsync(message),
-            "workspace.exportScheme" => await HandleExportSchemeAsync(message),
-            "workspace.inspectImport" => HandleInspectWorkspaceImport(message),
-            "workspace.confirmImport" => HandleConfirmWorkspaceImport(message),
-            "workspace.importComponent" => HandleImportComponent(message),
-            "workspace.importPage" => HandleImportPage(message),
-            "workspace.importScheme" => HandleImportScheme(message),
-            "capability.list" => new BridgeResponse(message.RequestId, true, _capabilityDirectory?.Categories() ?? []),
-            "permission.list" => new BridgeResponse(message.RequestId, true, new
+            using var document = JsonDocument.Parse(e.WebMessageAsJson);
+            if (document.RootElement.TryGetProperty("type", out var typeElement) &&
+                typeElement.GetString() == "diagnostic.error")
             {
-                grants = _permissions?.ListGrants() ?? [],
-                categories = _capabilityDirectory?.Categories() ?? []
-            }),
-            "permission.grant" => HandlePermissionGrant(message),
-            "permission.revoke" => HandlePermissionRevoke(message),
-            "pairing.generate" => HandlePairingGenerate(message),
-            "device.status" => HandleDeviceStatus(message),
-            "device.rename" => HandleDeviceRename(message),
-            "gateway.status" => HandleGatewayStatus(message),
-            "scheme.cacheManifest" => await HandleSchemeCacheManifestAsync(message),
-            "plugin.list" => new BridgeResponse(message.RequestId, true, _plugins?.InstalledPlugins ?? []),
-            "plugin.inspectImport" => HandleInspectPluginImport(message),
-            "plugin.confirmImport" => await HandleConfirmPluginImportAsync(message),
-            "plugin.import" => await HandlePluginImportAsync(message),
-            "plugin.delete" => await HandlePluginDeleteAsync(message),
-            "plugin.submitSettings" => await HandlePluginSubmitSettingsAsync(message),
-            "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
-            "window.minimize" => HandleWindowMinimize(message),
-            "window.maximize" => HandleWindowMaximize(message),
-            "window.dragStart" => HandleWindowDragStart(message),
-            "window.resizeStart" => HandleWindowResizeStart(message),
-            "window.close" => HandleWindowClose(message),
-            "window.theme" => HandleWindowTheme(message),
-            _ => new BridgeResponse(message.RequestId, false, null, "CapabilityNotSupported", "未知 OneDesk 桥接请求")
-        };
+                AppDiagnostics.Write($"Frontend error: {e.WebMessageAsJson}");
+                return;
+            }
 
+            if (document.RootElement.TryGetProperty("requestId", out var requestIdElement) &&
+                requestIdElement.ValueKind == JsonValueKind.String)
+            {
+                requestId = requestIdElement.GetString();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppDiagnostics.Write($"Bridge message parse failed: {ex}");
+            return;
+        }
+
+        BridgeMessage? message;
+        try
+        {
+            message = JsonSerializer.Deserialize<BridgeMessage>(e.WebMessageAsJson, JsonOptions);
+            if (message is null)
+            {
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppDiagnostics.Write($"Bridge message deserialize failed: {ex}");
+            if (!string.IsNullOrWhiteSpace(requestId))
+            {
+                PostBridgeResponse(new BridgeResponse(requestId, false, null, "InvalidPayload", "请求参数不完整或格式不正确"));
+            }
+
+            return;
+        }
+
+        object response;
+        try
+        {
+            response = message.Type switch
+            {
+                "getDeviceId" => new BridgeResponse(message.RequestId, true, _devices?.DesktopIdentity.DeviceId),
+                "callJsApi" => await HandleJsApiAsync(message),
+                "workspace.list" => await HandleWorkspaceListAsync(message),
+                "workspace.saveComponent" => await HandleSaveComponentAsync(message),
+                "workspace.readComponentFiles" => await HandleReadComponentFilesAsync(message),
+                "workspace.saveComponentFiles" => await HandleSaveComponentFilesAsync(message),
+                "workspace.deleteComponent" => HandleDeleteComponent(message),
+                "workspace.saveAction" => await HandleSaveActionAsync(message),
+                "workspace.deleteAction" => HandleDeleteAction(message),
+                "workspace.savePage" => await HandleSavePageAsync(message),
+                "workspace.deletePage" => HandleDeletePage(message),
+                "workspace.saveScheme" => await HandleSaveSchemeAsync(message),
+                "workspace.deleteScheme" => HandleDeleteScheme(message),
+                "workspace.applyScheme" => await HandleApplySchemeAsync(message),
+                "workspace.exportComponent" => await HandleExportComponentAsync(message),
+                "workspace.exportPage" => await HandleExportPageAsync(message),
+                "workspace.exportScheme" => await HandleExportSchemeAsync(message),
+                "workspace.inspectImport" => HandleInspectWorkspaceImport(message),
+                "workspace.confirmImport" => HandleConfirmWorkspaceImport(message),
+                "workspace.importComponent" => HandleImportComponent(message),
+                "workspace.importPage" => HandleImportPage(message),
+                "workspace.importScheme" => HandleImportScheme(message),
+                "capability.list" => new BridgeResponse(message.RequestId, true, _capabilityDirectory?.Categories() ?? []),
+                "permission.list" => new BridgeResponse(message.RequestId, true, new
+                {
+                    grants = _permissions?.ListGrants() ?? [],
+                    categories = _capabilityDirectory?.Categories() ?? []
+                }),
+                "permission.grant" => HandlePermissionGrant(message),
+                "permission.revoke" => HandlePermissionRevoke(message),
+                "pairing.generate" => HandlePairingGenerate(message),
+                "device.status" => HandleDeviceStatus(message),
+                "device.rename" => HandleDeviceRename(message),
+                "gateway.status" => HandleGatewayStatus(message),
+                "scheme.cacheManifest" => await HandleSchemeCacheManifestAsync(message),
+                "plugin.list" => new BridgeResponse(message.RequestId, true, _plugins?.InstalledPlugins ?? []),
+                "plugin.inspectImport" => HandleInspectPluginImport(message),
+                "plugin.confirmImport" => await HandleConfirmPluginImportAsync(message),
+                "plugin.import" => await HandlePluginImportAsync(message),
+                "plugin.delete" => await HandlePluginDeleteAsync(message),
+                "plugin.submitSettings" => await HandlePluginSubmitSettingsAsync(message),
+                "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
+                "window.minimize" => HandleWindowMinimize(message),
+                "window.maximize" => HandleWindowMaximize(message),
+                "window.dragStart" => HandleWindowDragStart(message),
+                "window.resizeStart" => HandleWindowResizeStart(message),
+                "window.close" => HandleWindowClose(message),
+                "window.theme" => HandleWindowTheme(message),
+                _ => new BridgeResponse(message.RequestId, false, null, "CapabilityNotSupported", "未知 OneDesk 桥接请求")
+            };
+        }
+        catch (Exception ex)
+        {
+            AppDiagnostics.Write($"Bridge request failed: {message.Type}; {ex}");
+            response = new BridgeResponse(message.RequestId, false, null, "BridgeRequestFailed", ex.Message);
+        }
+
+        PostBridgeResponse(response);
+    }
+
+    private void PostBridgeResponse(object response)
+    {
         var json = JsonSerializer.Serialize(response, JsonOptions);
         _browser?.CoreWebView2?.PostWebMessageAsJson(json);
     }
@@ -1777,7 +1821,14 @@ public sealed class MainForm : Form
         return new BridgeResponse(message.RequestId, false, null, "InvalidPayload", "请求参数不完整或格式不正确");
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
+        return options;
+    }
 
     private const int DwmwaUseImmersiveDarkMode = 20;
 

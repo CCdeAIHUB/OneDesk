@@ -515,7 +515,7 @@ function requestCodeMode() {
 async function createComponent() {
   const id = `component-${crypto.randomUUID()}`;
   const name = ensureUniqueDraftName("\u65b0\u7ec4\u4ef6");
-  const component: ComponentDefinition = {
+  const componentDraft: ComponentDefinition = {
     id,
     name,
     version: "1.0.0",
@@ -527,29 +527,42 @@ async function createComponent() {
     pluginDependencies: [],
   };
   announceToast("\u6b63\u5728\u521b\u5efa\u7ec4\u4ef6...");
-  const response = await sendShell<ComponentDefinition>("workspace.saveComponent", component);
-  if (!response.ok) {
-    announceToast(response.message ?? "\u7ec4\u4ef6\u521b\u5efa\u5931\u8d25");
-    return;
+  try {
+    const response = await sendShell<ComponentDefinition>("workspace.saveComponent", componentDraft);
+    if (!response.ok || !response.payload) {
+      announceToast(response.message ?? "\u7ec4\u4ef6\u521b\u5efa\u5931\u8d25");
+      return;
+    }
+
+    const component = response.payload;
+    workspace.components = [component, ...workspace.components.filter((item) => item.id !== component.id)];
+    workspace.selectedComponentId = component.id;
+    activeView.value = "component";
+    componentRoute.value = "editor";
+    componentEditorMode.value = "visual";
+    componentVisualSection.value = "base";
+    applyVisualConfigFromJson(undefined, component);
+    componentCodeDraft.value = generatedComponentCode(component);
+    hydrateCodeFiles(component);
+
+    const fileResponse = await sendShell<Record<string, string>>("workspace.saveComponentFiles", { id: component.id, files: codeFileDrafts.value });
+    if (!fileResponse.ok) {
+      announceToast(fileResponse.message ?? "\u7ec4\u4ef6\u521b\u5efa\u540e\u4ee3\u7801\u6587\u4ef6\u521d\u59cb\u5316\u5931\u8d25");
+      return;
+    }
+
+    await loadWorkspace({ preserveSelection: true, selectedComponentId: component.id });
+    workspace.selectedComponentId = component.id;
+    componentEditorMode.value = "visual";
+    componentRoute.value = "editor";
+    componentVisualSection.value = "base";
+    applyVisualConfigFromJson(codeFileDrafts.value["onedesk.visual.json"], component);
+    componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value] ?? generatedComponentCode(component);
+    announceToast("\u7ec4\u4ef6\u5df2\u521b\u5efa");
+  } catch (error) {
+    console.error("createComponent failed", error);
+    announceToast("\u7ec4\u4ef6\u521b\u5efa\u5931\u8d25");
   }
-  workspace.components = [component, ...workspace.components.filter((item) => item.id !== id)];
-  workspace.selectedComponentId = id;
-  activeView.value = "component";
-  componentRoute.value = "editor";
-  componentEditorMode.value = "visual";
-  componentVisualSection.value = "base";
-  applyVisualConfigFromJson(undefined, component);
-  componentCodeDraft.value = generatedComponentCode(component);
-  hydrateCodeFiles(component);
-  announceToast("\u7ec4\u4ef6\u5df2\u521b\u5efa");
-  await loadWorkspace({ preserveSelection: true, selectedComponentId: id });
-  workspace.selectedComponentId = id;
-  componentEditorMode.value = "visual";
-  applyVisualConfigFromJson(undefined, component);
-  componentCodeDraft.value = generatedComponentCode(component);
-  hydrateCodeFiles(component);
-  await sendShell("workspace.saveComponentFiles", { id, files: codeFileDrafts.value });
-  componentRoute.value = "editor";
 }
 
 async function createPage() {
