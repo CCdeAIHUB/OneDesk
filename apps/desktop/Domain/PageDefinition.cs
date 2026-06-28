@@ -9,6 +9,11 @@ public sealed record PageDefinition
     public required GridSpacing Spacing { get; init; }
     public required string BackgroundKind { get; init; }
     public required string BackgroundValue { get; init; }
+    public string? BackgroundSecondaryValue { get; init; }
+    public string? BackgroundResourceId { get; init; }
+    public string? BackgroundMediaSource { get; init; }
+    public string? GridHorizontalAlign { get; init; }
+    public string? GridVerticalAlign { get; init; }
     public required IReadOnlyList<GridCellDefinition> Cells { get; init; }
     public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
 }

@@ -89,8 +89,28 @@ export interface PageDefinition {
   spacing: GridSpacing;
   backgroundKind: string;
   backgroundValue: string;
+  backgroundSecondaryValue?: string | null;
+  backgroundResourceId?: string | null;
+  backgroundMediaSource?: string | null;
   cells: GridCellDefinition[];
   updatedAt?: string;
+}
+
+export interface MediaResourceDefinition {
+  id: string;
+  name: string;
+  kind: "image" | "video" | string;
+  fileName: string;
+  extension: string;
+  sizeBytes: number;
+  fileUri: string;
+  createdAt: string;
+}
+
+export interface MediaResourceCopyResult {
+  resourceId: string;
+  relativePath: string;
+  fileUri: string;
 }
 
 export interface PageSwitchDefinition {

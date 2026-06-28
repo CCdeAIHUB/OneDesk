@@ -2,13 +2,13 @@
 import { Icon } from "@iconify/vue";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import QRCode from "qrcode";
-import type { ActionDefinition, ComponentDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
+import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, sendShell, setShellTheme, startWindowDrag, startWindowResize } from "./nativeBridge";
 
 const activeView = ref<ViewKey>("home");
 const theme = ref<ThemeMode>("system");
-const settingsSection = ref<"general" | "connection" | "permission" | "logs" | "plugins">("general");
+const settingsSection = ref<"general" | "connection" | "permission" | "logs" | "plugins" | "resources">("general");
 const componentRoute = ref<SectionRoute>("manager");
 const pageRoute = ref<SectionRoute>("manager");
 const schemeRoute = ref<SectionRoute>("manager");
@@ -37,6 +37,10 @@ const selectedDeviceId = ref("");
 const selectedPluginId = ref("");
 const pluginSettingsDraft = ref<Record<string, Record<string, unknown>>>({});
 const selectedCellId = ref("");
+const pageLivePreview = ref(false);
+const showResourcePicker = ref(false);
+const resourcePickerTarget = ref<"page-background" | "component-background" | null>(null);
+const componentVisualCache = ref<Record<string, ReturnType<typeof defaultVisualConfig>>>({});
 const pendingDelete = ref<{ kind: "component" | "page" | "scheme" | "plugin" | "action"; id: string; name: string } | null>(null);
 const enableStartup = ref(false);
 const connectionPort = ref(48320);
@@ -173,11 +177,17 @@ const pagePreviewBackgroundStyle = computed(() => {
   const page = selectedPage.value;
   if (!page) return {} as Record<string, string>;
   if (page.backgroundKind === "solid") return { background: page.backgroundValue };
-  if (page.backgroundKind === "gradient") return { background: gradientPresets[page.backgroundValue] ?? (page.backgroundValue.includes("gradient") ? page.backgroundValue : gradientPresets["sky-cyan"]) };
-  if (page.backgroundKind === "image" && page.backgroundValue) return { backgroundImage: `url(${page.backgroundValue})`, backgroundSize: "cover", backgroundPosition: "center" };
-  if (page.backgroundKind === "video") return { background: "#0f172a" };
+  if (page.backgroundKind === "gradient") return { background: gradientPresets[page.backgroundValue] ?? `linear-gradient(135deg, ${page.backgroundValue || "#0ea5e9"}, ${page.backgroundSecondaryValue || "#22d3ee"})` };
+  if (page.backgroundKind === "image" && page.backgroundMediaSource) return { backgroundImage: `url(${page.backgroundMediaSource})`, backgroundSize: "cover", backgroundPosition: "center" };
+  if (page.backgroundKind === "video" && page.backgroundMediaSource) return { background: "#0f172a" };
   return { background: "#0ea5e9" } as Record<string, string>;
 });
+const resourcePickerTitle = computed(() => resourcePickerTarget.value === "component-background" ? "选择组件媒体资源" : "选择页面媒体资源");
+const resourcePickerKind = computed(() => {
+  if (resourcePickerTarget.value === "component-background") return visualConfig.value.background.kind === "video" ? "video" : "image";
+  return selectedPage.value?.backgroundKind === "video" ? "video" : "image";
+});
+const resourcePickerItems = computed(() => workspace.resources.filter((resource) => resource.kind === resourcePickerKind.value));
 const pageGridStyle = computed(() => {
   const page = selectedPage.value;
   const rows = clampGridCount(page?.rows ?? 3);
@@ -357,13 +367,94 @@ function syncVisualSectionFromScroll() {
   if (active) componentVisualSection.value = active;
 }
 
-function onBackgroundAssetPicked(event: Event, kind: "image" | "video") {
-  const input = event.target as HTMLInputElement | null;
-  const file = input?.files?.[0];
-  if (!file) return;
-  visualConfig.value.background.kind = kind;
-  visualConfig.value.background.value = file.name;
-  visualConfig.value.background.mediaSource = URL.createObjectURL(file);
+function openResourcePicker(target: "page-background" | "component-background") {
+  resourcePickerTarget.value = target;
+  showResourcePicker.value = true;
+}
+
+async function addMediaResource() {
+  const response = await sendShell<MediaResourceDefinition>("resource.add");
+  announceToast(response.ok ? "资源已添加" : response.message ?? "资源添加失败");
+  await loadWorkspace({ preserveSelection: true, selectedComponentId: workspace.selectedComponentId, selectedPageId: workspace.selectedPageId, selectedSchemeId: workspace.selectedSchemeId });
+}
+
+async function deleteMediaResource(resource: MediaResourceDefinition) {
+  const response = await sendShell("resource.delete", { id: resource.id });
+  announceToast(response.ok ? "资源已删除" : response.message ?? "资源删除失败");
+  await loadWorkspace({ preserveSelection: true, selectedComponentId: workspace.selectedComponentId, selectedPageId: workspace.selectedPageId, selectedSchemeId: workspace.selectedSchemeId });
+}
+
+async function chooseMediaResource(resource: MediaResourceDefinition) {
+  if (resourcePickerTarget.value === "page-background" && selectedPage.value) {
+    const response = await sendShell<MediaResourceCopyResult>("resource.copyToPage", { resourceId: resource.id, targetId: selectedPage.value.id });
+    if (!response.ok || !response.payload) {
+      announceToast(response.message ?? "资源复制失败");
+      return;
+    }
+    selectedPage.value.backgroundKind = resource.kind === "video" ? "video" : "image";
+    selectedPage.value.backgroundResourceId = resource.id;
+    selectedPage.value.backgroundValue = resource.id;
+    selectedPage.value.backgroundMediaSource = response.payload.fileUri;
+    announceToast("资源已复制到页面");
+  } else if (resourcePickerTarget.value === "component-background" && selectedComponent.value) {
+    const response = await sendShell<MediaResourceCopyResult>("resource.copyToComponent", { resourceId: resource.id, targetId: selectedComponent.value.id });
+    if (!response.ok || !response.payload) {
+      announceToast(response.message ?? "资源复制失败");
+      return;
+    }
+    visualConfig.value.background.kind = resource.kind === "video" ? "video" : "image";
+    visualConfig.value.background.value = resource.id;
+    visualConfig.value.background.mediaSource = response.payload.fileUri;
+    codeFileDrafts.value["onedesk.visual.json"] = JSON.stringify(visualConfig.value, null, 2);
+    announceToast("资源已复制到组件");
+  }
+  showResourcePicker.value = false;
+}
+
+async function enablePageLivePreview() {
+  pageLivePreview.value = !pageLivePreview.value;
+  if (!pageLivePreview.value) return;
+  const ids = Array.from(new Set((selectedPage.value?.cells ?? []).map((cell) => cell.componentId).filter(Boolean))) as string[];
+  await Promise.all(ids.map(async (id) => {
+    if (componentVisualCache.value[id]) return;
+    const component = workspace.components.find((item) => item.id === id);
+    const response = await sendShell<Record<string, string>>("workspace.readComponentFiles", { id });
+    componentVisualCache.value = {
+      ...componentVisualCache.value,
+      [id]: parseVisualConfig(response.ok ? response.payload?.["onedesk.visual.json"] : undefined, component),
+    };
+  }));
+}
+
+function parseVisualConfig(json: string | undefined, component?: ComponentDefinition) {
+  const current = visualConfig.value;
+  const previous = current;
+  applyVisualConfigFromJson(json, component);
+  const parsed = visualConfig.value;
+  visualConfig.value = previous;
+  return parsed;
+}
+
+function componentPreviewForCell(componentId?: string | null) {
+  const component = workspace.components.find((item) => item.id === componentId);
+  const config = componentId ? componentVisualCache.value[componentId] : null;
+  return { component, config };
+}
+
+function componentPreviewTileStyle(config?: ReturnType<typeof defaultVisualConfig> | null) {
+  if (!config) return {};
+  const bg = config.background;
+  const background = bg.kind === "solid"
+    ? bg.value
+    : bg.kind === "gradient"
+      ? `linear-gradient(135deg, ${bg.value}, ${bg.secondaryValue})`
+      : bg.kind === "image" && bg.mediaSource
+        ? `url(${bg.mediaSource}) center / ${config.image.size} no-repeat`
+        : gradientPresets["sky-cyan"];
+  return {
+    background,
+    borderRadius: `${config.base.borderRadius}px`,
+  } as Record<string, string>;
 }
 
 function navIcon(item: (typeof navItems)[number]) {
@@ -601,6 +692,9 @@ async function createPage() {
     spacing: { padding: 16, rowGap: 10, columnGap: 10 },
     backgroundKind: "solid",
     backgroundValue: "#0ea5e9",
+    backgroundSecondaryValue: "#22d3ee",
+    backgroundResourceId: null,
+    backgroundMediaSource: null,
     cells: [],
   };
   ensurePageGridCells(page);
@@ -1268,12 +1362,12 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                       <label class="field-label"><span>结束颜色</span><input v-model="visualConfig.background.secondaryValue" type="color" class="field h-10 p-1" /></label>
                     </template>
                     <template v-else-if="visualConfig.background.kind === 'image'">
-                      <label class="field-label"><span>图片文件</span><input type="file" accept="image/*" class="field h-10 p-2" @change="onBackgroundAssetPicked($event, 'image')" /></label>
-                      <label class="field-label"><span>图片资源名</span><input v-model="visualConfig.background.value" class="field" placeholder="已选择的图片文件名" /></label>
+                      <label class="field-label"><span>图片资源 ID</span><input v-model="visualConfig.background.value" class="field" placeholder="从资源管理器选择后写入" /></label>
+                      <button class="resource-pick-button" type="button" @click="openResourcePicker('component-background')"><Icon icon="solar:gallery-add-bold-duotone" class="size-4" />选择图片资源</button>
                     </template>
                     <template v-else>
-                      <label class="field-label"><span>视频文件</span><input type="file" accept="video/*" class="field h-10 p-2" @change="onBackgroundAssetPicked($event, 'video')" /></label>
-                      <label class="field-label"><span>视频资源名</span><input v-model="visualConfig.background.value" class="field" placeholder="已选择的视频文件名" /></label>
+                      <label class="field-label"><span>视频资源 ID</span><input v-model="visualConfig.background.value" class="field" placeholder="从资源管理器选择后写入" /></label>
+                      <button class="resource-pick-button" type="button" @click="openResourcePicker('component-background')"><Icon icon="solar:video-library-bold-duotone" class="size-4" />选择视频资源</button>
                     </template>
                     <label class="field-label"><span>图片尺寸</span><select v-model="visualConfig.image.size" class="field"><option value="cover">填充覆盖</option><option value="contain">完整显示</option></select></label>
                     <label class="field-label"><span>图片位置</span><select v-model="visualConfig.image.position" class="field"><option value="center">居中</option><option value="left">靠左</option><option value="right">靠右</option><option value="top">靠上</option><option value="bottom">靠下</option></select></label>
@@ -1354,7 +1448,91 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </section>
 
           <section v-else-if="activeView === 'page'" class="h-full">
-            <div class="grid h-[calc(100%-32px)] min-h-0 grid-cols-[300px_1fr] gap-5"><aside class="scrollable min-h-0 overflow-auto rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag><div class="mt-1 grid gap-3 text-[12px]"><label v-if="selectedPage" class="field-label">行数<input v-model.number="selectedPage.rows" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label v-if="selectedPage" class="field-label">列数<input v-model.number="selectedPage.columns" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label v-if="selectedPage" class="field-label">水平对齐<select v-model="selectedPage.gridHorizontalAlign" class="field"><option value="left">靠左</option><option value="center">居中</option><option value="right">靠右</option></select></label><label v-if="selectedPage" class="field-label">垂直对齐<select v-model="selectedPage.gridVerticalAlign" class="field"><option value="top">靠上</option><option value="center">居中</option><option value="bottom">靠下</option></select></label><label v-if="selectedPage" class="field-label">页边距<input v-model.number="selectedPage.spacing.padding" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">行间距<input v-model.number="selectedPage.spacing.rowGap" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">列间距<input v-model.number="selectedPage.spacing.columnGap" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">页面背景<select v-model="selectedPage.backgroundKind" class="field"><option value="solid">纯色背景</option><option value="gradient">渐变背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></label><label v-if="selectedPage" class="field-label">背景值<input v-model="selectedPage.backgroundValue" class="field" /></label></div><div v-if="selectedCell" class="mt-5 grid gap-3 text-[12px]"><h3 class="text-[13px] font-semibold">当前格子</h3><label class="field-label">跨行<input v-model.number="selectedCell.rowSpan" type="number" min="1" :max="selectedPage?.rows ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label class="field-label">跨列<input v-model.number="selectedCell.columnSpan" type="number" min="1" :max="selectedPage?.columns ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label class="field-label">绑定组件<select v-model="selectedCell.componentId" class="field"><option :value="null">不绑定组件</option><option v-for="component in workspace.components" :key="component.id" :value="component.id">{{ component.name }}</option></select></label><label class="field-label">圆角<input v-model.number="selectedCell.style.borderRadius" type="number" class="field" /></label><label class="field-label">轮廓颜色<input v-model="selectedCell.style.outlineColor" class="field" /></label><label class="field-label">轮廓宽度<input v-model.number="selectedCell.style.outlineWidth" type="number" class="field" /></label><label class="field-label">轮廓样式<select v-model="selectedCell.style.outlineStyle" class="field"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label></div><p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p></aside><div class="grid min-h-0 place-items-center rounded-[22px] bg-white p-6 shadow-sm dark:bg-slate-900"><div class="page-preview-frame w-full max-w-[420px] overflow-hidden rounded-[24px] bg-slate-100 dark:bg-slate-800" :class="pagePreviewAspect" :style="pagePreviewBackgroundStyle"><div class="page-grid-preview" :style="pageGridStyle"><button v-for="cell in selectedPage?.cells" :key="cell.id" class="page-grid-cell overflow-hidden bg-white text-[10px] text-slate-500 dark:bg-slate-900" :class="selectedCellId === cell.id ? 'ring-2 ring-sky-400' : ''" :style="{ gridColumn: `${cell.column} / span ${cell.columnSpan}`, gridRow: `${cell.row} / span ${cell.rowSpan}`, borderRadius: `${cell.style.borderRadius}px`, border: `${cell.style.outlineWidth}px ${cell.style.outlineStyle} ${cell.style.outlineColor}` }" @click="selectedCellId = cell.id"><span v-if="cell.componentId" class="grid h-full place-items-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span></button></div></div></div></div>
+            <div class="grid h-[calc(100%-32px)] min-h-0 grid-cols-[320px_1fr] gap-5">
+              <aside class="soft-card scrollable min-h-0 overflow-auto p-4" data-no-window-drag>
+                <div class="editor-section-card border-0 shadow-none">
+                  <div class="editor-section-head">
+                    <h3>格子矩阵</h3>
+                    <p>设置行列、间距与矩阵在移动页面中的位置。</p>
+                  </div>
+                  <div class="editor-section-grid">
+                    <label v-if="selectedPage" class="field-label"><span>行数</span><input v-model.number="selectedPage.rows" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
+                    <label v-if="selectedPage" class="field-label"><span>列数</span><input v-model.number="selectedPage.columns" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
+                    <label v-if="selectedPage" class="field-label"><span>水平对齐</span><select v-model="selectedPage.gridHorizontalAlign" class="field"><option value="left">靠左</option><option value="center">居中</option><option value="right">靠右</option></select></label>
+                    <label v-if="selectedPage" class="field-label"><span>垂直对齐</span><select v-model="selectedPage.gridVerticalAlign" class="field"><option value="top">靠上</option><option value="center">居中</option><option value="bottom">靠下</option></select></label>
+                    <label v-if="selectedPage" class="field-label"><span>页边距</span><input v-model.number="selectedPage.spacing.padding" type="number" min="0" class="field" /></label>
+                    <label v-if="selectedPage" class="field-label"><span>行间距</span><input v-model.number="selectedPage.spacing.rowGap" type="number" min="0" class="field" /></label>
+                    <label v-if="selectedPage" class="field-label"><span>列间距</span><input v-model.number="selectedPage.spacing.columnGap" type="number" min="0" class="field" /></label>
+                  </div>
+                </div>
+
+                <div class="editor-section-card mt-4 border-0 shadow-none">
+                  <div class="editor-section-head">
+                    <h3>页面背景</h3>
+                    <p>颜色直接保存；图片和视频必须从资源管理器选择。</p>
+                  </div>
+                  <div class="editor-section-grid">
+                    <label v-if="selectedPage" class="field-label"><span>背景类型</span><select v-model="selectedPage.backgroundKind" class="field"><option value="solid">纯色背景</option><option value="gradient">渐变背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></label>
+                    <template v-if="selectedPage?.backgroundKind === 'solid'">
+                      <label class="field-label"><span>背景颜色</span><input v-model="selectedPage.backgroundValue" type="color" class="field h-10 p-1" /></label>
+                    </template>
+                    <template v-else-if="selectedPage?.backgroundKind === 'gradient'">
+                      <label class="field-label"><span>起始颜色</span><input v-model="selectedPage.backgroundValue" type="color" class="field h-10 p-1" /></label>
+                      <label class="field-label"><span>结束颜色</span><input v-model="selectedPage.backgroundSecondaryValue" type="color" class="field h-10 p-1" /></label>
+                    </template>
+                    <template v-else>
+                      <label class="field-label"><span>{{ selectedPage?.backgroundKind === 'video' ? '视频资源 ID' : '图片资源 ID' }}</span><input v-if="selectedPage" v-model="selectedPage.backgroundValue" class="field" placeholder="从资源管理器选择后写入" /></label>
+                      <button class="resource-pick-button" type="button" @click="openResourcePicker('page-background')"><Icon :icon="selectedPage?.backgroundKind === 'video' ? 'solar:video-library-bold-duotone' : 'solar:gallery-add-bold-duotone'" class="size-4" />选择资源</button>
+                    </template>
+                  </div>
+                </div>
+
+                <div v-if="selectedCell" class="editor-section-card mt-4 border-0 shadow-none">
+                  <div class="editor-section-head">
+                    <h3>当前格子</h3>
+                    <p>绑定组件并设置格子的占位、圆角与轮廓。</p>
+                  </div>
+                  <div class="editor-section-grid">
+                    <label class="field-label"><span>跨行</span><input v-model.number="selectedCell.rowSpan" type="number" min="1" :max="selectedPage?.rows ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
+                    <label class="field-label"><span>跨列</span><input v-model.number="selectedCell.columnSpan" type="number" min="1" :max="selectedPage?.columns ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
+                    <label class="field-label"><span>绑定组件</span><select v-model="selectedCell.componentId" class="field"><option :value="null">不绑定组件</option><option v-for="component in workspace.components" :key="component.id" :value="component.id">{{ component.name }}</option></select></label>
+                    <label class="field-label"><span>圆角</span><input v-model.number="selectedCell.style.borderRadius" type="number" min="0" class="field" /></label>
+                    <label class="field-label"><span>轮廓颜色</span><input v-model="selectedCell.style.outlineColor" type="color" class="field h-10 p-1" /></label>
+                    <label class="field-label"><span>轮廓宽度</span><input v-model.number="selectedCell.style.outlineWidth" type="number" min="0" class="field" /></label>
+                    <label class="field-label"><span>轮廓样式</span><select v-model="selectedCell.style.outlineStyle" class="field"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label>
+                  </div>
+                </div>
+                <p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p>
+              </aside>
+              <div class="soft-card grid min-h-0 place-items-center p-5">
+                <div class="mb-4 flex w-full items-center justify-between gap-3">
+                  <div>
+                    <h3 class="text-[14px] font-semibold">页面预览</h3>
+                    <p class="mt-1 text-[12px] text-slate-500">开启真实预览后，格子会显示绑定组件保存时的内容。</p>
+                  </div>
+                  <button class="header-surface-button" :class="pageLivePreview ? 'ring-2 ring-sky-400' : ''" @click="enablePageLivePreview">{{ pageLivePreview ? '关闭真实预览' : '开启真实预览' }}</button>
+                </div>
+                <div class="page-preview-frame w-full max-w-[460px] overflow-hidden rounded-[24px] bg-slate-100 dark:bg-slate-800" :class="pagePreviewAspect" :style="pagePreviewBackgroundStyle">
+                  <div class="page-grid-preview" :style="pageGridStyle">
+                    <button
+                      v-for="cell in selectedPage?.cells"
+                      :key="cell.id"
+                      class="page-grid-cell overflow-hidden bg-white text-[10px] text-slate-500 dark:bg-slate-900"
+                      :class="selectedCellId === cell.id ? 'ring-2 ring-sky-400' : ''"
+                      :style="{ gridColumnStart: cell.column, gridColumnEnd: `span ${cell.columnSpan}`, gridRowStart: cell.row, gridRowEnd: `span ${cell.rowSpan}`, borderRadius: `${cell.style.borderRadius}px`, border: `${cell.style.outlineWidth}px ${cell.style.outlineStyle} ${cell.style.outlineColor}` }"
+                      @click="selectedCellId = cell.id"
+                    >
+                      <template v-if="pageLivePreview && cell.componentId">
+                        <span class="component-live-tile" :style="componentPreviewTileStyle(componentPreviewForCell(cell.componentId).config)">
+                          <span :style="{ fontSize: `${componentPreviewForCell(cell.componentId).config?.text.fontSize ?? 12}px`, color: componentPreviewForCell(cell.componentId).config?.text.color ?? '#ffffff' }">{{ componentPreviewForCell(cell.componentId).config?.text.content || componentPreviewForCell(cell.componentId).component?.name }}</span>
+                        </span>
+                      </template>
+                      <span v-else-if="cell.componentId" class="grid h-full place-items-center px-1 text-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section v-else-if="activeView === 'scheme' && schemeRoute === 'manager'" class="scrollable h-full overflow-auto" data-no-window-drag>
@@ -1406,6 +1584,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <button class="menu-row" :class="settingsSection === 'general' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'general'"><Icon icon="solar:tuning-2-bold-duotone" class="size-5" />通用</button>
                 <button class="menu-row" :class="settingsSection === 'connection' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'connection'"><Icon icon="solar:link-bold-duotone" class="size-5" />连接</button>
                 <button class="menu-row" :class="settingsSection === 'permission' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'permission'"><Icon icon="solar:shield-keyhole-bold-duotone" class="size-5" />权限管理</button>
+                <button class="menu-row" :class="settingsSection === 'resources' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'resources'"><Icon icon="solar:gallery-wide-bold-duotone" class="size-5" />资源管理器</button>
                 <button class="menu-row" :class="settingsSection === 'plugins' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'plugins'"><Icon icon="solar:plug-circle-bold-duotone" class="size-5" />插件</button>
                 <button class="menu-row" :class="settingsSection === 'logs' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'logs'"><Icon icon="solar:document-text-bold-duotone" class="size-5" />日志</button>
               </aside>
@@ -1421,6 +1600,30 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                   <p class="text-[12px] text-slate-500">端口修改会影响移动端连接信息；当前网关状态仍以壳子返回值为准。</p>
                 </div>
                 <div v-else-if="settingsSection === 'permission'" class="grid gap-2"><div class="rounded-2xl bg-slate-50 px-4 py-3 text-[13px] dark:bg-slate-950"><label class="field-label max-w-[420px]">授权对象<select class="field" :value="`${permissionSourceKind}:${permissionSourceId}`" @change="(() => { const value = ($event.target as HTMLSelectElement).value; const splitAt = value.indexOf(':'); const kind = value.slice(0, splitAt); const id = value.slice(splitAt + 1); permissionSourceKind = kind as 'component' | 'plugin'; permissionSourceId = id; })"><option v-for="option in permissionSourceOptions" :key="`${option.kind}:${option.id}`" :value="`${option.kind}:${option.id}`">{{ option.label }}</option></select></label><p class="mt-2 text-[12px] text-slate-500">当前：{{ permissionSourceLabel }} · {{ permissionSourceKey }} · 大类授权会覆盖全部小类，小类授权只开放单项能力。</p></div><div v-for="item in permissionRows" :key="item.id" class="rounded-2xl bg-slate-50 px-4 py-3 text-[13px] dark:bg-slate-950"><div class="flex items-center justify-between gap-4"><div class="min-w-0"><p class="truncate font-semibold">{{ item.name }}</p><p class="mt-1 truncate text-[12px] text-slate-500">{{ item.categoryName }} · {{ item.id }}</p></div><div class="flex items-center gap-2"><span :class="item.highRisk ? 'text-rose-500' : 'text-sky-600'">{{ item.highRisk ? '高危' : '普通' }}</span><button class="rounded-full px-3 py-1.5 text-[12px] font-medium" :class="selectedGrants.includes(item.id) ? 'bg-sky-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'" @click="togglePermission(item.id)">{{ selectedGrants.includes(item.id) ? '已授权' : '授权' }}</button></div></div></div></div>
+                <div v-else-if="settingsSection === 'resources'" class="grid gap-3 text-[13px]">
+                  <div class="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">
+                    <div>
+                      <p class="font-semibold">媒体资源</p>
+                      <p class="mt-1 text-[12px] text-slate-500">图片和视频先进入资源管理器，再复制到组件或页面目录中使用。</p>
+                    </div>
+                    <button class="header-primary-button" @click="addMediaResource">添加资源</button>
+                  </div>
+                  <div class="resource-grid">
+                    <article v-for="resource in workspace.resources" :key="resource.id" class="resource-card">
+                      <div class="resource-thumb">
+                        <img v-if="resource.kind === 'image'" :src="resource.fileUri" alt="" class="h-full w-full object-cover" />
+                        <Icon v-else icon="solar:video-frame-play-horizontal-bold-duotone" class="size-8 text-sky-500" />
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate font-semibold">{{ resource.name }}</p>
+                        <p class="mt-1 truncate text-[11px] text-slate-500">{{ resource.kind }} · {{ resource.id }}</p>
+                        <p class="mt-1 text-[11px] text-slate-500">{{ Math.max(1, Math.round(resource.sizeBytes / 1024)) }} KB</p>
+                      </div>
+                      <button class="card-action danger w-[72px]" @click="deleteMediaResource(resource)">删除</button>
+                    </article>
+                    <div v-if="!workspace.resources.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-950">暂无资源。点击添加资源导入图片或视频。</div>
+                  </div>
+                </div>
                 <div v-else-if="settingsSection === 'plugins'" class="grid gap-3 text-[13px]"><p class="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">已安装插件：{{ workspace.plugins.length }} 个。插件导入、设置和权限仍在插件页面管理。</p><button class="w-fit rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="activeView = 'plugin'">前往插件</button></div>
                 <div v-else class="grid gap-2 text-[13px]"><div v-for="(log, index) in workspace.logs.slice(0, 20)" :key="index" class="rounded-2xl bg-slate-50 px-4 py-3 text-[12px] dark:bg-slate-950">{{ JSON.stringify(log) }}</div><p v-if="!workspace.logs.length" class="rounded-2xl bg-slate-50 px-4 py-3 text-slate-500 dark:bg-slate-950">暂无日志。</p></div>
               </section>
@@ -1431,6 +1634,36 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
         <footer class="h-8 shrink-0"><div v-if="exporting" class="mt-3 h-1.5 overflow-hidden rounded-full bg-white dark:bg-slate-900"><div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${exportProgress}%` }"></div></div></footer>
       </section>
     </section>
+
+    <div v-if="showResourcePicker" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
+      <div class="modal-panel w-full max-w-[620px] rounded-[28px] bg-white p-5 shadow-2xl dark:bg-slate-950">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h3 class="text-[16px] font-semibold">{{ resourcePickerTitle }}</h3>
+            <p class="mt-1 text-[12px] text-slate-500">当前只显示 {{ resourcePickerKind === 'video' ? '视频' : '图片' }} 资源；选择后会复制到当前{{ resourcePickerTarget === 'component-background' ? '组件' : '页面' }}目录。</p>
+          </div>
+          <button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showResourcePicker = false"><Icon icon="solar:close-circle-bold-duotone" class="size-5" /></button>
+        </div>
+        <div class="mt-4 flex justify-end">
+          <button class="header-primary-button" @click="addMediaResource">添加资源</button>
+        </div>
+        <div class="scrollable mt-4 grid max-h-[420px] gap-3 overflow-auto pr-2" data-no-window-drag>
+          <button v-for="resource in resourcePickerItems" :key="resource.id" class="resource-card text-left" @click="chooseMediaResource(resource)">
+            <div class="resource-thumb">
+              <img v-if="resource.kind === 'image'" :src="resource.fileUri" alt="" class="h-full w-full object-cover" />
+              <Icon v-else icon="solar:video-frame-play-horizontal-bold-duotone" class="size-8 text-sky-500" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="truncate font-semibold">{{ resource.name }}</p>
+              <p class="mt-1 truncate text-[11px] text-slate-500">{{ resource.id }}</p>
+              <p class="mt-1 text-[11px] text-slate-500">{{ resource.extension }} · {{ Math.max(1, Math.round(resource.sizeBytes / 1024)) }} KB</p>
+            </div>
+            <span class="rounded-full bg-sky-50 px-3 py-1.5 text-[12px] font-medium text-sky-600 dark:bg-sky-950/50">选择</span>
+          </button>
+          <div v-if="!resourcePickerItems.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-900">暂无可用资源，请先添加{{ resourcePickerKind === 'video' ? '视频' : '图片' }}资源。</div>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showDeviceDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
       <div class="modal-panel max-h-[calc(100vh-72px)] w-full max-w-[760px] overflow-hidden rounded-[30px] bg-white p-5 shadow-2xl dark:bg-slate-950">

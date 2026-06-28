@@ -104,6 +104,65 @@ public sealed class OneDeskRepository
         DeleteDirectory(Path.Combine(_paths.Pages, pageId));
     }
 
+    public async Task<MediaResourceDefinition> AddMediaResourceAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException("Media file does not exist.", sourcePath);
+        }
+
+        var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+        var kind = extension is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif" or ".bmp" ? "image" :
+            extension is ".mp4" or ".webm" or ".mov" or ".mkv" or ".avi" ? "video" : "file";
+        if (kind == "file")
+        {
+            throw new InvalidDataException("Only image and video resources are supported.");
+        }
+
+        var id = $"resource-{Guid.NewGuid():N}";
+        var root = Path.Combine(_paths.Resources, id);
+        Directory.CreateDirectory(root);
+        var fileName = $"{id}{extension}";
+        var target = Path.Combine(root, fileName);
+        File.Copy(sourcePath, target, overwrite: true);
+        var info = new FileInfo(target);
+        var resource = new MediaResourceDefinition
+        {
+            Id = id,
+            Name = Path.GetFileNameWithoutExtension(sourcePath),
+            Kind = kind,
+            FileName = fileName,
+            Extension = extension,
+            SizeBytes = info.Length,
+            FileUri = new Uri(target).AbsoluteUri,
+        };
+
+        await _store.SaveAsync(Path.Combine(root, "onedesk.resource.json"), resource, cancellationToken);
+        return resource;
+    }
+
+    public Task<IReadOnlyList<MediaResourceDefinition>> ListMediaResourcesAsync(CancellationToken cancellationToken = default)
+    {
+        return _store.LoadDirectoryAsync<MediaResourceDefinition>(_paths.Resources, "onedesk.resource.json", cancellationToken);
+    }
+
+    public void DeleteMediaResource(string resourceId)
+    {
+        DeleteDirectory(Path.Combine(_paths.Resources, SafeFileName(resourceId, "resource id")));
+    }
+
+    public async Task<MediaResourceCopyResult> CopyMediaResourceToComponentAsync(string resourceId, string componentId, CancellationToken cancellationToken = default)
+    {
+        var resource = await GetMediaResourceAsync(resourceId, cancellationToken) ?? throw new InvalidDataException("Resource does not exist.");
+        return CopyMediaResource(resource, Path.Combine(ComponentRoot(componentId), "assets"));
+    }
+
+    public async Task<MediaResourceCopyResult> CopyMediaResourceToPageAsync(string resourceId, string pageId, CancellationToken cancellationToken = default)
+    {
+        var resource = await GetMediaResourceAsync(resourceId, cancellationToken) ?? throw new InvalidDataException("Resource does not exist.");
+        return CopyMediaResource(resource, Path.Combine(PageRoot(pageId), "assets"));
+    }
+
     public Task SaveSchemeAsync(SchemeDefinition scheme, CancellationToken cancellationToken = default)
     {
         return _store.SaveAsync(Path.Combine(_paths.Schemes, scheme.Id, "onedesk.scheme.json"), scheme, cancellationToken);
@@ -163,12 +222,49 @@ public sealed class OneDeskRepository
 
     private string ComponentRoot(string componentId)
     {
-        if (string.IsNullOrWhiteSpace(componentId) || componentId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        return Path.GetFullPath(Path.Combine(_paths.Components, SafeFileName(componentId, "component id")));
+    }
+
+    private string PageRoot(string pageId)
+    {
+        return Path.GetFullPath(Path.Combine(_paths.Pages, SafeFileName(pageId, "page id")));
+    }
+
+    private async Task<MediaResourceDefinition?> GetMediaResourceAsync(string resourceId, CancellationToken cancellationToken)
+    {
+        var id = SafeFileName(resourceId, "resource id");
+        return await _store.LoadAsync<MediaResourceDefinition>(Path.Combine(_paths.Resources, id, "onedesk.resource.json"), cancellationToken);
+    }
+
+    private MediaResourceCopyResult CopyMediaResource(MediaResourceDefinition resource, string targetRoot)
+    {
+        Directory.CreateDirectory(targetRoot);
+        var source = Path.Combine(_paths.Resources, SafeFileName(resource.Id, "resource id"), resource.FileName);
+        if (!File.Exists(source))
         {
-            throw new InvalidDataException("Invalid component id.");
+            throw new FileNotFoundException("Resource file does not exist.", source);
         }
 
-        return Path.GetFullPath(Path.Combine(_paths.Components, componentId));
+        var fileName = $"{resource.Id}{resource.Extension}";
+        var target = Path.Combine(targetRoot, fileName);
+        File.Copy(source, target, overwrite: true);
+        var relative = Path.GetRelativePath(Path.GetDirectoryName(targetRoot) ?? targetRoot, target).Replace('\\', '/');
+        return new MediaResourceCopyResult
+        {
+            ResourceId = resource.Id,
+            RelativePath = relative,
+            FileUri = new Uri(target).AbsoluteUri,
+        };
+    }
+
+    private static string SafeFileName(string value, string label)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            throw new InvalidDataException($"Invalid {label}.");
+        }
+
+        return value;
     }
 
     private string ActiveSchemePath(string? deviceId)

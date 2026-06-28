@@ -7,6 +7,7 @@ import type {
   DeviceIdentity,
   DeviceStatusSnapshot,
   GatewayStatus,
+  MediaResourceDefinition,
   NavigationItem,
   PageDefinition,
   PermissionListSnapshot,
@@ -41,6 +42,7 @@ export const workspace = reactive({
   capabilities: [] as CapabilityCategory[],
   logs: [] as unknown[],
   plugins: [] as PluginManifest[],
+  resources: [] as MediaResourceDefinition[],
   permissionGrants: [] as PermissionListSnapshot["grants"],
   deviceStatus: null as DeviceStatusSnapshot | null,
   gatewayStatus: null as GatewayStatus | null,
@@ -69,7 +71,7 @@ export async function loadWorkspace(options?: {
 }): Promise<void> {
   workspace.loading = true;
   try {
-    const [workspaceResponse, capabilityResponse, logResponse, permissionResponse, deviceResponse, gatewayResponse, cacheResponse, pluginResponse] = await Promise.all([
+    const [workspaceResponse, capabilityResponse, logResponse, permissionResponse, deviceResponse, gatewayResponse, cacheResponse, pluginResponse, resourceResponse] = await Promise.all([
       sendShell<WorkspaceSnapshot>("workspace.list"),
       sendShell<CapabilityCategory[]>("capability.list"),
       sendShell<unknown[]>("log.list"),
@@ -78,6 +80,7 @@ export async function loadWorkspace(options?: {
       sendShell<GatewayStatus>("gateway.status"),
       sendShell<SchemeCacheManifest | null>("scheme.cacheManifest"),
       sendShell<PluginManifest[]>("plugin.list"),
+      sendShell<MediaResourceDefinition[]>("resource.list"),
     ]);
 
     if (workspaceResponse.ok && workspaceResponse.payload) {
@@ -130,6 +133,10 @@ export async function loadWorkspace(options?: {
 
     if (pluginResponse.ok && pluginResponse.payload) {
       workspace.plugins = pluginResponse.payload;
+    }
+
+    if (resourceResponse.ok && resourceResponse.payload) {
+      workspace.resources = resourceResponse.payload;
     }
   } finally {
     workspace.loading = false;

@@ -541,6 +541,11 @@ public sealed class MainForm : Form
                 "workspace.saveComponent" => await HandleSaveComponentAsync(message),
                 "workspace.readComponentFiles" => await HandleReadComponentFilesAsync(message),
                 "workspace.saveComponentFiles" => await HandleSaveComponentFilesAsync(message),
+                "resource.list" => await HandleResourceListAsync(message),
+                "resource.add" => await HandleResourceAddAsync(message),
+                "resource.delete" => HandleResourceDelete(message),
+                "resource.copyToComponent" => await HandleResourceCopyToComponentAsync(message),
+                "resource.copyToPage" => await HandleResourceCopyToPageAsync(message),
                 "workspace.deleteComponent" => HandleDeleteComponent(message),
                 "workspace.saveAction" => await HandleSaveActionAsync(message),
                 "workspace.deleteAction" => HandleDeleteAction(message),
@@ -798,6 +803,116 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             return new BridgeResponse(message.RequestId, false, null, "ComponentFileSaveFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleResourceListAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        return new BridgeResponse(message.RequestId, true, await _repository.ListMediaResourcesAsync());
+    }
+
+    private async Task<BridgeResponse> HandleResourceAddAsync(BridgeMessage message)
+    {
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        using var dialog = new OpenFileDialog
+        {
+            Title = "添加媒体资源",
+            Filter = "媒体文件 (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.webm;*.mov;*.mkv;*.avi)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.webm;*.mov;*.mkv;*.avi|All Files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "UserCancelled", "已取消添加资源");
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _repository.AddMediaResourceAsync(dialog.FileName));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ResourceAddFailed", ex.Message);
+        }
+    }
+
+    private BridgeResponse HandleResourceDelete(BridgeMessage message)
+    {
+        var id = ReadPayloadString(message, "id");
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            _repository.DeleteMediaResource(id);
+            return new BridgeResponse(message.RequestId, true, null);
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ResourceDeleteFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleResourceCopyToComponentAsync(BridgeMessage message)
+    {
+        var payload = DeserializePayload<ResourceCopyPayload>(message);
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (payload is null || string.IsNullOrWhiteSpace(payload.ResourceId) || string.IsNullOrWhiteSpace(payload.TargetId))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _repository.CopyMediaResourceToComponentAsync(payload.ResourceId, payload.TargetId));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ResourceCopyFailed", ex.Message);
+        }
+    }
+
+    private async Task<BridgeResponse> HandleResourceCopyToPageAsync(BridgeMessage message)
+    {
+        var payload = DeserializePayload<ResourceCopyPayload>(message);
+        if (_repository is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        if (payload is null || string.IsNullOrWhiteSpace(payload.ResourceId) || string.IsNullOrWhiteSpace(payload.TargetId))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            return new BridgeResponse(message.RequestId, true, await _repository.CopyMediaResourceToPageAsync(payload.ResourceId, payload.TargetId));
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "ResourceCopyFailed", ex.Message);
         }
     }
 
@@ -2018,4 +2133,8 @@ public sealed class MainForm : Form
     private sealed record ComponentFilesPayload(
         string Id,
         IReadOnlyDictionary<string, string> Files);
+
+    private sealed record ResourceCopyPayload(
+        string ResourceId,
+        string TargetId);
 }
