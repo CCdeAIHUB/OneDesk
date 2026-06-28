@@ -178,6 +178,22 @@ const pagePreviewBackgroundStyle = computed(() => {
   if (page.backgroundKind === "video") return { background: "#0f172a" };
   return { background: "#0ea5e9" } as Record<string, string>;
 });
+const pageGridStyle = computed(() => {
+  const page = selectedPage.value;
+  const rows = clampGridCount(page?.rows ?? 3);
+  const columns = clampGridCount(page?.columns ?? 3);
+  const horizontal = page?.gridHorizontalAlign ?? "center";
+  const vertical = page?.gridVerticalAlign ?? "center";
+  return {
+    "--page-grid-columns": String(columns),
+    "--page-grid-rows": String(rows),
+    "--page-grid-row-gap": `${Math.max(0, Number(page?.spacing.rowGap ?? 8))}px`,
+    "--page-grid-column-gap": `${Math.max(0, Number(page?.spacing.columnGap ?? 8))}px`,
+    "--page-grid-padding": `${Math.max(0, Number(page?.spacing.padding ?? 12))}px`,
+    justifyContent: horizontal === "left" ? "start" : horizontal === "right" ? "end" : "center",
+    alignContent: vertical === "top" ? "start" : vertical === "bottom" ? "end" : "center",
+  } as Record<string, string>;
+});
 const importPermissionRows = computed(() => pendingInspection.value?.permissions ?? selectedComponent.value?.requestedPermissions ?? []);
 const selectedPlugin = computed(() => workspace.plugins.find((plugin) => plugin.id === selectedPluginId.value) ?? workspace.plugins[0] ?? null);
 const componentCodeFiles = computed(() => [
@@ -254,6 +270,12 @@ watch(() => workspace.toast, (message) => {
   if (!message || workspace.loading) return;
   pushToast(message);
 });
+
+watch(
+  () => [selectedPage.value?.id, selectedPage.value?.rows, selectedPage.value?.columns],
+  () => ensurePageGridCells(selectedPage.value),
+  { immediate: true },
+);
 
 function pushToast(message: string) {
   const id = ++toastSequence;
@@ -444,6 +466,7 @@ async function chooseComponent(component: ComponentDefinition) {
 }
 
 function choosePage(page: PageDefinition) {
+  ensurePageGridCells(page);
   workspace.selectedPageId = page.id;
   selectedCellId.value = page.cells[0]?.id ?? "";
   pageRoute.value = "editor";
@@ -573,19 +596,14 @@ async function createPage() {
     name,
     rows: 4,
     columns: 3,
+    gridHorizontalAlign: "center",
+    gridVerticalAlign: "center",
     spacing: { padding: 16, rowGap: 10, columnGap: 10 },
     backgroundKind: "solid",
     backgroundValue: "#0ea5e9",
-    cells: Array.from({ length: 12 }, (_, index) => ({
-      id: `${id}-cell-${index + 1}`,
-      row: Math.floor(index / 3) + 1,
-      column: (index % 3) + 1,
-      rowSpan: 1,
-      columnSpan: 1,
-      componentId: null,
-      style: { borderRadius: 16, outlineColor: "#e2e8f0", outlineWidth: 1, outlineStyle: "solid" },
-    })),
+    cells: [],
   };
+  ensurePageGridCells(page);
   const response = await sendShell<PageDefinition>("workspace.savePage", page);
   announceToast(response.ok ? "\u9875\u9762\u5df2\u521b\u5efa" : response.message ?? "\u9875\u9762\u521b\u5efa\u5931\u8d25");
   await loadWorkspace({ preserveSelection: true, selectedPageId: id });
@@ -793,9 +811,70 @@ function selectCodeFile(path: string) {
   componentCodeDraft.value = codeFileDrafts.value[path] ?? "";
 }
 
+function clampGridCount(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(12, Math.max(1, Math.round(parsed)));
+}
+
+function defaultPageCellStyle() {
+  return { borderRadius: 16, outlineColor: "#e2e8f0", outlineWidth: 1, outlineStyle: "solid" };
+}
+
+function ensurePageGridCells(page?: PageDefinition | null) {
+  if (!page) return;
+  page.rows = clampGridCount(page.rows);
+  page.columns = clampGridCount(page.columns);
+  page.gridHorizontalAlign ??= "center";
+  page.gridVerticalAlign ??= "center";
+
+  const existingByPosition = new Map<string, (typeof page.cells)[number]>();
+  for (const cell of page.cells ?? []) {
+    const row = clampGridCount(cell.row);
+    const column = clampGridCount(cell.column);
+    if (row > page.rows || column > page.columns) continue;
+    cell.row = row;
+    cell.column = column;
+    cell.rowSpan = Math.min(clampGridCount(cell.rowSpan), page.rows - row + 1);
+    cell.columnSpan = Math.min(clampGridCount(cell.columnSpan), page.columns - column + 1);
+    cell.style ??= defaultPageCellStyle();
+    cell.style.borderRadius ??= 16;
+    cell.style.outlineColor ||= "#e2e8f0";
+    cell.style.outlineWidth ??= 1;
+    cell.style.outlineStyle ||= "solid";
+    existingByPosition.set(`${row}:${column}`, cell);
+  }
+
+  const cells: PageDefinition["cells"] = [];
+  for (let row = 1; row <= page.rows; row += 1) {
+    for (let column = 1; column <= page.columns; column += 1) {
+      const key = `${row}:${column}`;
+      cells.push(existingByPosition.get(key) ?? {
+        id: `${page.id}-cell-${row}-${column}`,
+        row,
+        column,
+        rowSpan: 1,
+        columnSpan: 1,
+        componentId: null,
+        style: defaultPageCellStyle(),
+      });
+    }
+  }
+
+  page.cells = cells;
+  if (!page.cells.some((cell) => cell.id === selectedCellId.value)) {
+    selectedCellId.value = page.cells[0]?.id ?? "";
+  }
+}
+
+function handlePageGridChanged() {
+  ensurePageGridCells(selectedPage.value);
+}
+
 async function savePage() {
   if (!selectedPage.value) return;
   if (!ensureEditorNameAvailable()) return;
+  ensurePageGridCells(selectedPage.value);
   const response = await sendShell<PageDefinition>("workspace.savePage", selectedPage.value);
   announceToast(response.ok ? "页面已保存" : response.message ?? "页面保存失败");
   await loadWorkspace({ preserveSelection: true, selectedPageId: selectedPage.value.id });
@@ -1275,7 +1354,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </section>
 
           <section v-else-if="activeView === 'page'" class="h-full">
-            <div class="grid h-[calc(100%-32px)] min-h-0 grid-cols-[300px_1fr] gap-5"><aside class="scrollable min-h-0 overflow-auto rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag><div class="mt-1 grid gap-3 text-[12px]"><label v-if="selectedPage" class="field-label">行数<input v-model.number="selectedPage.rows" type="number" min="1" max="12" class="field" /></label><label v-if="selectedPage" class="field-label">列数<input v-model.number="selectedPage.columns" type="number" min="1" max="12" class="field" /></label><label v-if="selectedPage" class="field-label">页边距<input v-model.number="selectedPage.spacing.padding" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">行间距<input v-model.number="selectedPage.spacing.rowGap" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">列间距<input v-model.number="selectedPage.spacing.columnGap" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">页面背景<select v-model="selectedPage.backgroundKind" class="field"><option value="solid">纯色背景</option><option value="gradient">渐变背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></label><label v-if="selectedPage" class="field-label">背景值<input v-model="selectedPage.backgroundValue" class="field" /></label></div><div v-if="selectedCell" class="mt-5 grid gap-3 text-[12px]"><h3 class="text-[13px] font-semibold">当前格子</h3><label class="field-label">跨行<input v-model.number="selectedCell.rowSpan" type="number" min="1" :max="selectedPage?.rows ?? 12" class="field" /></label><label class="field-label">跨列<input v-model.number="selectedCell.columnSpan" type="number" min="1" :max="selectedPage?.columns ?? 12" class="field" /></label><label class="field-label">绑定组件<select v-model="selectedCell.componentId" class="field"><option :value="null">不绑定组件</option><option v-for="component in workspace.components" :key="component.id" :value="component.id">{{ component.name }}</option></select></label><label class="field-label">圆角<input v-model.number="selectedCell.style.borderRadius" type="number" class="field" /></label><label class="field-label">轮廓颜色<input v-model="selectedCell.style.outlineColor" class="field" /></label><label class="field-label">轮廓宽度<input v-model.number="selectedCell.style.outlineWidth" type="number" class="field" /></label><label class="field-label">轮廓样式<select v-model="selectedCell.style.outlineStyle" class="field"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label></div><p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p></aside><div class="grid min-h-0 place-items-center rounded-[22px] bg-white p-6 shadow-sm dark:bg-slate-900"><div class="grid w-full max-w-[420px] overflow-hidden rounded-[24px] bg-slate-100 dark:bg-slate-800" :class="pagePreviewAspect" :style="[pagePreviewBackgroundStyle, { padding: `${selectedPage?.spacing.padding ?? 12}px`, gap: `${selectedPage?.spacing.rowGap ?? 8}px ${selectedPage?.spacing.columnGap ?? 8}px`, gridTemplateColumns: `repeat(${selectedPage?.columns ?? 3}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${selectedPage?.rows ?? 3}, minmax(0, 1fr))` }]"><button v-for="cell in selectedPage?.cells" :key="cell.id" class="overflow-hidden bg-white text-[10px] text-slate-500 dark:bg-slate-900" :class="selectedCellId === cell.id ? 'ring-2 ring-sky-400' : ''" :style="{ gridColumn: `span ${cell.columnSpan} / span ${cell.columnSpan}`, gridRow: `span ${cell.rowSpan} / span ${cell.rowSpan}`, borderRadius: `${cell.style.borderRadius}px`, border: `${cell.style.outlineWidth}px ${cell.style.outlineStyle} ${cell.style.outlineColor}` }" @click="selectedCellId = cell.id"><span v-if="cell.componentId" class="grid h-full place-items-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span></button></div></div></div>
+            <div class="grid h-[calc(100%-32px)] min-h-0 grid-cols-[300px_1fr] gap-5"><aside class="scrollable min-h-0 overflow-auto rounded-[18px] bg-white p-4 shadow-sm dark:bg-slate-900" data-no-window-drag><div class="mt-1 grid gap-3 text-[12px]"><label v-if="selectedPage" class="field-label">行数<input v-model.number="selectedPage.rows" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label v-if="selectedPage" class="field-label">列数<input v-model.number="selectedPage.columns" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label v-if="selectedPage" class="field-label">水平对齐<select v-model="selectedPage.gridHorizontalAlign" class="field"><option value="left">靠左</option><option value="center">居中</option><option value="right">靠右</option></select></label><label v-if="selectedPage" class="field-label">垂直对齐<select v-model="selectedPage.gridVerticalAlign" class="field"><option value="top">靠上</option><option value="center">居中</option><option value="bottom">靠下</option></select></label><label v-if="selectedPage" class="field-label">页边距<input v-model.number="selectedPage.spacing.padding" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">行间距<input v-model.number="selectedPage.spacing.rowGap" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">列间距<input v-model.number="selectedPage.spacing.columnGap" type="number" class="field" /></label><label v-if="selectedPage" class="field-label">页面背景<select v-model="selectedPage.backgroundKind" class="field"><option value="solid">纯色背景</option><option value="gradient">渐变背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></label><label v-if="selectedPage" class="field-label">背景值<input v-model="selectedPage.backgroundValue" class="field" /></label></div><div v-if="selectedCell" class="mt-5 grid gap-3 text-[12px]"><h3 class="text-[13px] font-semibold">当前格子</h3><label class="field-label">跨行<input v-model.number="selectedCell.rowSpan" type="number" min="1" :max="selectedPage?.rows ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label class="field-label">跨列<input v-model.number="selectedCell.columnSpan" type="number" min="1" :max="selectedPage?.columns ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label><label class="field-label">绑定组件<select v-model="selectedCell.componentId" class="field"><option :value="null">不绑定组件</option><option v-for="component in workspace.components" :key="component.id" :value="component.id">{{ component.name }}</option></select></label><label class="field-label">圆角<input v-model.number="selectedCell.style.borderRadius" type="number" class="field" /></label><label class="field-label">轮廓颜色<input v-model="selectedCell.style.outlineColor" class="field" /></label><label class="field-label">轮廓宽度<input v-model.number="selectedCell.style.outlineWidth" type="number" class="field" /></label><label class="field-label">轮廓样式<select v-model="selectedCell.style.outlineStyle" class="field"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label></div><p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p></aside><div class="grid min-h-0 place-items-center rounded-[22px] bg-white p-6 shadow-sm dark:bg-slate-900"><div class="page-preview-frame w-full max-w-[420px] overflow-hidden rounded-[24px] bg-slate-100 dark:bg-slate-800" :class="pagePreviewAspect" :style="pagePreviewBackgroundStyle"><div class="page-grid-preview" :style="pageGridStyle"><button v-for="cell in selectedPage?.cells" :key="cell.id" class="page-grid-cell overflow-hidden bg-white text-[10px] text-slate-500 dark:bg-slate-900" :class="selectedCellId === cell.id ? 'ring-2 ring-sky-400' : ''" :style="{ gridColumn: `${cell.column} / span ${cell.columnSpan}`, gridRow: `${cell.row} / span ${cell.rowSpan}`, borderRadius: `${cell.style.borderRadius}px`, border: `${cell.style.outlineWidth}px ${cell.style.outlineStyle} ${cell.style.outlineColor}` }" @click="selectedCellId = cell.id"><span v-if="cell.componentId" class="grid h-full place-items-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span></button></div></div></div></div>
           </section>
 
           <section v-else-if="activeView === 'scheme' && schemeRoute === 'manager'" class="scrollable h-full overflow-auto" data-no-window-drag>

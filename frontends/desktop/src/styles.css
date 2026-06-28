@@ -671,3 +671,29 @@ select.field {
   background: rgb(14 165 233 / 0.12);
   color: rgb(2 132 199);
 }
+
+.page-preview-frame {
+  position: relative;
+  min-height: 0;
+}
+
+.page-grid-preview {
+  --page-grid-cell-size: min(
+    calc((100% - (var(--page-grid-padding) * 2) - ((var(--page-grid-columns) - 1) * var(--page-grid-column-gap))) / var(--page-grid-columns)),
+    calc((100% - (var(--page-grid-padding) * 2) - ((var(--page-grid-rows) - 1) * var(--page-grid-row-gap))) / var(--page-grid-rows))
+  );
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: repeat(var(--page-grid-columns), var(--page-grid-cell-size));
+  grid-template-rows: repeat(var(--page-grid-rows), var(--page-grid-cell-size));
+  gap: var(--page-grid-row-gap) var(--page-grid-column-gap);
+  padding: var(--page-grid-padding);
+  overflow: hidden;
+}
+
+.page-grid-cell {
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+}

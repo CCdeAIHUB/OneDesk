@@ -84,6 +84,8 @@ export interface PageDefinition {
   name: string;
   rows: number;
   columns: number;
+  gridHorizontalAlign?: "left" | "center" | "right";
+  gridVerticalAlign?: "top" | "center" | "bottom";
   spacing: GridSpacing;
   backgroundKind: string;
   backgroundValue: string;
