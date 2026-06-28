@@ -21,6 +21,32 @@ public sealed class PluginHostService : IDisposable
 
     public IReadOnlyList<PluginManifest> InstalledPlugins => _plugins.Values.Select(registration => registration.Manifest).ToArray();
 
+    public Task<bool> RemoveAsync(string pluginId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_plugins.TryRemove(pluginId, out var registration))
+        {
+            return Task.FromResult(false);
+        }
+
+        if (registration.Process is { HasExited: false } process)
+        {
+            process.Kill(entireProcessTree: true);
+            process.Dispose();
+        }
+
+        if (!string.IsNullOrWhiteSpace(registration.PackageDirectory) && Directory.Exists(registration.PackageDirectory))
+        {
+            Directory.Delete(registration.PackageDirectory, recursive: true);
+        }
+
+        _logs.Append("desktop", "Info", "Plugin", "Removed plugin", new Dictionary<string, object?>
+        {
+            ["pluginId"] = pluginId
+        });
+        return Task.FromResult(true);
+    }
+
     public async Task RegisterManifestAsync(PluginManifest manifest, string packageDirectory = "", CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

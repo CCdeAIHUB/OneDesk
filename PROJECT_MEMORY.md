@@ -39,6 +39,10 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Trusted mobile pairing credentials are persisted under `%LOCALAPPDATA%\OneDesk\trusted-devices.json`, so a paired mobile can reconnect without a new six-digit code after desktop restart.
 - Scheme application can now be stored per mobile device, with the legacy global active scheme kept as a fallback. Mobile gateway responses use the requesting mobile device ID to select the scheme snapshot.
 - Desktop UI has Chinese-only visible text, card-based component/page/scheme management, device management dialog with selectable trusted mobile devices, vertical theme selector, custom window controls, transparent/frosted shell background, and opaque content cards/nav surfaces.
+- Desktop UI color tokens are recorded in `frontends/desktop/src/uiColorScheme.ts`; light/dark surfaces should keep level-1 and level-2 backgrounds visually distinct while retaining `sky-500` as the theme color.
+- The Windows shell exposes `window.resizeStart` so the WebView frontend can hand edge/corner resizing back to native Windows hit testing instead of relying only on WinForms client-area hit testing.
+- Desktop management cards for components, pages, and schemes should open their editor when the card itself is clicked; delete actions require an in-app confirmation dialog.
+- Desktop editor page names are editable from the top header, and save/export/apply controls belong in the top header area immediately to the left of the device selector.
 - Desktop device management must not show the desktop client itself as a managed device. The desktop shows local LAN IP, QUIC port, verification code, QR payload, and a generated QR image so mobile clients initiate pairing. Real mobile pairing still depends on completing the QUIC transport loop.
 - The desktop device selector displays the currently selected/trusted mobile device icon and name. If a mobile device has a remark, UI should display the remark.
 - Creating a component, page, or scheme should enter the corresponding editor immediately, where the user can edit the name and save.

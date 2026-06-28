@@ -52,7 +52,7 @@ export const workspace = reactive({
 export const quickActions: QuickAction[] = [
   { label: "创建新方案", icon: "solar:add-circle-bold-duotone", color: "text-sky-500" },
   { label: "导入方案", icon: "solar:download-minimalistic-bold-duotone", color: "text-green-500" },
-  { label: "打开动作编辑器", icon: "solar:bolt-bold-duotone", color: "text-violet-500" },
+  { label: "连接设备", icon: "solar:devices-bold-duotone", color: "text-violet-500" },
 ];
 
 export const quickStart: QuickStartItem[] = [

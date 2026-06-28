@@ -22,7 +22,7 @@ public sealed class MainForm : Form
 {
     private static readonly Size InitialWindowSize = new(1200, 780);
     private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
-    private const int ResizeGripSize = 10;
+    private const int ResizeGripSize = 14;
     private const int CornerRadius = 24;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
@@ -442,11 +442,13 @@ public sealed class MainForm : Form
             "plugin.inspectImport" => HandleInspectPluginImport(message),
             "plugin.confirmImport" => await HandleConfirmPluginImportAsync(message),
             "plugin.import" => await HandlePluginImportAsync(message),
+            "plugin.delete" => await HandlePluginDeleteAsync(message),
             "plugin.submitSettings" => await HandlePluginSubmitSettingsAsync(message),
             "log.list" => new BridgeResponse(message.RequestId, true, _logs?.Recent() ?? []),
             "window.minimize" => HandleWindowMinimize(message),
             "window.maximize" => HandleWindowMaximize(message),
             "window.dragStart" => HandleWindowDragStart(message),
+            "window.resizeStart" => HandleWindowResizeStart(message),
             "window.close" => HandleWindowClose(message),
             "window.theme" => HandleWindowTheme(message),
             _ => new BridgeResponse(message.RequestId, false, null, "CapabilityNotSupported", "未知 OneDesk 桥接请求")
@@ -1312,6 +1314,32 @@ public sealed class MainForm : Form
         }
     }
 
+    private async Task<BridgeResponse> HandlePluginDeleteAsync(BridgeMessage message)
+    {
+        if (_plugins is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var pluginId = ReadPayloadString(message, "id");
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            return InvalidPayload(message);
+        }
+
+        try
+        {
+            var removed = await _plugins.RemoveAsync(pluginId);
+            return removed
+                ? new BridgeResponse(message.RequestId, true, new { pluginId })
+                : new BridgeResponse(message.RequestId, false, null, "PluginNotFound", "插件不存在");
+        }
+        catch (Exception ex)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "PluginDeleteFailed", ex.Message);
+        }
+    }
+
     private BridgeResponse HandlePairingGenerate(BridgeMessage message)
     {
         if (_pairing is null)
@@ -1361,6 +1389,31 @@ public sealed class MainForm : Form
     {
         BeginNativeWindowDrag();
         return new BridgeResponse(message.RequestId, true, null);
+    }
+
+    private BridgeResponse HandleWindowResizeStart(BridgeMessage message)
+    {
+        var edge = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : null;
+        var hitTest = edge switch
+        {
+            "left" => HtLeft,
+            "right" => HtRight,
+            "top" => HtTop,
+            "bottom" => HtBottom,
+            "top-left" => HtTopLeft,
+            "top-right" => HtTopRight,
+            "bottom-left" => HtBottomLeft,
+            "bottom-right" => HtBottomRight,
+            _ => HtClient
+        };
+
+        if (hitTest != HtClient)
+        {
+            ReleaseCapture();
+            SendMessage(Handle, WmNcLButtonDown, hitTest, 0);
+        }
+
+        return new BridgeResponse(message.RequestId, hitTest != HtClient, hitTest != HtClient);
     }
 
     private BridgeResponse HandleWindowClose(BridgeMessage message)
@@ -1615,6 +1668,9 @@ public sealed class MainForm : Form
     },
     startWindowDrag() {
       return send('window.dragStart');
+    },
+    startWindowResize(edge) {
+      return send('window.resizeStart', { payload: edge });
     },
     closeWindow() {
       return send('window.close');

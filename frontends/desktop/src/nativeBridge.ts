@@ -23,6 +23,7 @@ declare global {
       minimizeWindow?: () => string | Promise<string>;
       maximizeWindow?: () => string | Promise<string>;
       startWindowDrag?: () => string | Promise<string>;
+      startWindowResize?: (edge: string) => string | Promise<string>;
       closeWindow?: () => string | Promise<string>;
       setShellTheme?: (theme: ThemeForShell) => string | Promise<string>;
       send?: (type: string, payloadJson?: string) => string | Promise<string>;
@@ -115,6 +116,10 @@ export async function maximizeWindow(): Promise<boolean> {
 
 export async function startWindowDrag(): Promise<void> {
   await window.OneDeskNative?.startWindowDrag?.();
+}
+
+export async function startWindowResize(edge: string): Promise<void> {
+  await window.OneDeskNative?.startWindowResize?.(edge);
 }
 
 export async function closeWindow(): Promise<void> {
