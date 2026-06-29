@@ -19,6 +19,7 @@ import {
   textPositionStyle,
   visualVideoSource,
   type VisualConfig,
+  type VisualTextLayer,
 } from "./editorVisualConfig";
 
 const activeView = ref<ViewKey>("home");
@@ -59,6 +60,7 @@ const componentVisualCache = ref<Record<string, VisualConfig>>({});
 const pendingDelete = ref<{ kind: "component" | "page" | "scheme" | "plugin" | "action"; id: string; name: string } | null>(null);
 const componentPreviewEl = ref<HTMLElement | null>(null);
 const draggingTextLayerId = ref<string | null>(null);
+const resizingTextLayerId = ref<string | null>(null);
 const enableStartup = ref(false);
 const connectionPort = ref(48320);
 const toasts = ref<Array<{ id: number; message: string }>>([]);
@@ -140,7 +142,8 @@ const currentDevice = computed(() => trustedDevices.value.find((device) => devic
 const currentDeviceName = computed(() => currentDevice.value ? (currentDevice.value.remark || currentDevice.value.displayName) : "等待移动设备连接");
 const currentDeviceIcon = computed(() => currentDevice.value ? "solar:smartphone-bold-duotone" : "solar:devices-bold-duotone");
 const localPairingHost = computed(() => pairing.value?.host ?? workspace.deviceStatus?.localIps?.[0] ?? "127.0.0.1");
-const pagePreviewAspect = computed(() => currentDevice.value ? "aspect-[9/16]" : "aspect-[3/4]");
+const pagePreviewRatioWidth = ref(21);
+const pagePreviewRatioHeight = ref(9);
 const previewAspectStyle = computed(() => {
   const match = previewRatio.value.trim().match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/);
   return { aspectRatio: match ? `${match[1]} / ${match[2]}` : "1 / 1" };
@@ -159,21 +162,57 @@ const componentPreviewStyle = computed(() => buildComponentPreviewStyle(visualCo
 const componentPreviewVideoSource = computed(() => visualVideoSource(visualConfig.value));
 const componentHasEnteredCodeMode = computed(() => componentEditorMode.value === "code" || String(selectedComponent.value?.editMode).toLowerCase() === "code");
 const pagePreviewBackgroundStyle = computed(() => pageBackgroundStyle(selectedPage.value));
+const pagePreviewFrameStyle = computed(() => {
+  const size = pagePreviewFrameSize.value;
+  return {
+    ...pagePreviewBackgroundStyle.value,
+    width: size.width > 0 ? `${size.width}px` : "100%",
+    height: size.height > 0 ? `${size.height}px` : "100%",
+  };
+});
 const resourcePickerTitle = computed(() => resourcePickerTarget.value === "component-background" ? "选择组件媒体资源" : "选择页面媒体资源");
 const resourcePickerKind = computed(() => {
   if (resourcePickerTarget.value === "component-background") return visualConfig.value.background.kind === "video" ? "video" : "image";
   return selectedPage.value?.backgroundKind === "video" ? "video" : "image";
 });
 const resourcePickerItems = computed(() => workspace.resources.filter((resource) => resource.kind === resourcePickerKind.value));
-const pagePreviewFrameEl = ref<HTMLElement | null>(null);
+const pagePreviewStageEl = ref<HTMLElement | null>(null);
 const pagePreviewFrameSize = ref({ width: 0, height: 0 });
 let pagePreviewResizeObserver: ResizeObserver | null = null;
 
 function measurePagePreviewFrame() {
-  const el = pagePreviewFrameEl.value;
+  const el = pagePreviewStageEl.value;
   if (!el) return;
-  // 这里使用 clientWidth/clientHeight，避免 getBoundingClientRect 的小数像素影响格子 1:1 计算。
-  pagePreviewFrameSize.value = { width: el.clientWidth, height: el.clientHeight };
+  const ratioWidth = normalizeRatioNumber(pagePreviewRatioWidth.value, 21);
+  const ratioHeight = normalizeRatioNumber(pagePreviewRatioHeight.value, 9);
+  pagePreviewFrameSize.value = calculatePreviewFrameSize(el.clientWidth, el.clientHeight, ratioWidth, ratioHeight);
+}
+
+function normalizeRatioNumber(value: number, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function calculatePreviewFrameSize(parentWidth: number, parentHeight: number, ratioWidth: number, ratioHeight: number) {
+  const safeWidth = Math.max(0, parentWidth);
+  const safeHeight = Math.max(0, parentHeight);
+  if (safeWidth <= 0 || safeHeight <= 0) return { width: 0, height: 0 };
+
+  // 页面预览必须完整收进父容器，所以先按可用宽度推导高度，过高时再以高度反算宽度。
+  const ratio = ratioWidth / ratioHeight;
+  let width = safeWidth;
+  let height = width / ratio;
+  if (height > safeHeight) {
+    height = safeHeight;
+    width = height * ratio;
+  }
+  return { width: Math.floor(width), height: Math.floor(height) };
+}
+
+function swapPagePreviewRatio() {
+  const width = pagePreviewRatioWidth.value;
+  pagePreviewRatioWidth.value = pagePreviewRatioHeight.value;
+  pagePreviewRatioHeight.value = width;
 }
 
 function bindPagePreviewObserver() {
@@ -181,7 +220,7 @@ function bindPagePreviewObserver() {
     pagePreviewResizeObserver.disconnect();
     pagePreviewResizeObserver = null;
   }
-  const el = pagePreviewFrameEl.value;
+  const el = pagePreviewStageEl.value;
   if (!el || typeof ResizeObserver === "undefined") return;
   // 预览容器刚进入 DOM 时 aspect-ratio 可能还没稳定，所以立即测量后再等两个布局帧复测。
   measurePagePreviewFrame();
@@ -267,9 +306,13 @@ onMounted(async () => {
   if (!permissionSourceId.value && workspace.components[0]) permissionSourceId.value = workspace.components[0].id;
 });
 
-// 页面预览容器出现或变化时，重新绑定尺寸观察器。
-watch(pagePreviewFrameEl, () => {
+// 页面预览舞台出现或变化时，重新绑定尺寸观察器。
+watch(pagePreviewStageEl, () => {
   nextTick(() => bindPagePreviewObserver());
+});
+
+watch([pagePreviewRatioWidth, pagePreviewRatioHeight], () => {
+  nextTick(() => measurePagePreviewFrame());
 });
 
 // 进入页面编辑器时重新测量，保证初次渲染就能按 1:1 计算格子。
@@ -855,6 +898,8 @@ function addVisualText() {
     position: "center",
     x: 50,
     y: 50,
+    width: 58,
+    height: 18,
   });
 }
 
@@ -865,6 +910,7 @@ function removeVisualText(id: string) {
 }
 
 function beginDragTextLayer(event: PointerEvent, textId: string) {
+  if (componentEditorMode.value !== "visual" || resizingTextLayerId.value) return;
   const target = event.currentTarget;
   if (!(target instanceof HTMLElement)) return;
   draggingTextLayerId.value = textId;
@@ -873,6 +919,7 @@ function beginDragTextLayer(event: PointerEvent, textId: string) {
 }
 
 function dragTextLayer(event: PointerEvent, textId: string) {
+  if (componentEditorMode.value !== "visual") return;
   if (draggingTextLayerId.value !== textId) return;
   updateTextLayerFromPointer(event, textId);
 }
@@ -886,6 +933,7 @@ function endDragTextLayer(event: PointerEvent) {
 }
 
 function updateTextLayerFromPointer(event: PointerEvent, textId: string) {
+  if (componentEditorMode.value !== "visual") return;
   const frame = componentPreviewEl.value;
   const text = visualConfig.value.texts.find((item) => item.id === textId);
   if (!frame || !text) return;
@@ -894,6 +942,48 @@ function updateTextLayerFromPointer(event: PointerEvent, textId: string) {
   text.x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
   text.y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100));
   text.position = "custom";
+}
+
+function beginResizeTextLayer(event: PointerEvent, textId: string) {
+  if (componentEditorMode.value !== "visual") return;
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) return;
+  resizingTextLayerId.value = textId;
+  target.setPointerCapture(event.pointerId);
+  updateTextLayerSizeFromPointer(event, textId);
+}
+
+function resizeTextLayer(event: PointerEvent, textId: string) {
+  if (resizingTextLayerId.value !== textId) return;
+  updateTextLayerSizeFromPointer(event, textId);
+}
+
+function endResizeTextLayer(event: PointerEvent) {
+  const target = event.currentTarget;
+  if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
+    target.releasePointerCapture(event.pointerId);
+  }
+  resizingTextLayerId.value = null;
+}
+
+function updateTextLayerSizeFromPointer(event: PointerEvent, textId: string) {
+  const frame = componentPreviewEl.value;
+  const text = visualConfig.value.texts.find((item) => item.id === textId);
+  if (!frame || !text) return;
+  const rect = frame.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const pointerX = ((event.clientX - rect.left) / rect.width) * 100;
+  const pointerY = ((event.clientY - rect.top) / rect.height) * 100;
+  text.width = Math.max(8, Math.min(100, Math.abs(pointerX - text.x) * 2));
+  text.height = Math.max(6, Math.min(100, Math.abs(pointerY - text.y) * 2));
+}
+
+function textLayerPreviewStyle(text: VisualTextLayer, index: number) {
+  return {
+    ...textPositionStyle(text.position, index, visualConfig.value.texts.length, text.x, text.y),
+    width: `${text.width ?? 58}%`,
+    minHeight: `${text.height ?? 18}%`,
+  };
 }
 
 function hydrateCodeFiles(component?: ComponentDefinition) {
@@ -1496,15 +1586,25 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                   <div
                     v-for="(text, index) in visualConfig.texts"
                     :key="text.id"
-                    class="absolute z-[1] cursor-move select-none rounded-xl px-2 py-1 transition-shadow hover:bg-slate-950/20 hover:shadow-lg"
-                    :style="textPositionStyle(text.position, index, visualConfig.texts.length, text.x, text.y)"
+                    class="component-text-layer absolute z-[1] select-none rounded-xl px-2 py-1 transition-shadow"
+                    :class="componentEditorMode === 'visual' ? 'cursor-move hover:bg-slate-950/20 hover:shadow-lg' : 'cursor-default'"
+                    :style="textLayerPreviewStyle(text, index)"
                     data-no-window-drag
                     @pointerdown.stop.prevent="beginDragTextLayer($event, text.id)"
                     @pointermove.stop.prevent="dragTextLayer($event, text.id)"
                     @pointerup.stop.prevent="endDragTextLayer"
                     @pointercancel.stop.prevent="endDragTextLayer"
                   >
-                    <p class="font-semibold" :style="{ fontSize: `${text.fontSize}px`, color: text.color }">{{ text.content || '文字' }}</p>
+                    <p class="grid h-full min-h-[28px] place-items-center overflow-hidden break-words text-center font-semibold leading-snug" :style="{ fontSize: `${text.fontSize}px`, color: text.color }">{{ text.content || '文字' }}</p>
+                    <span
+                      v-if="componentEditorMode === 'visual'"
+                      class="component-text-resize-handle"
+                      data-no-window-drag
+                      @pointerdown.stop.prevent="beginResizeTextLayer($event, text.id)"
+                      @pointermove.stop.prevent="resizeTextLayer($event, text.id)"
+                      @pointerup.stop.prevent="endResizeTextLayer"
+                      @pointercancel.stop.prevent="endResizeTextLayer"
+                    ></span>
                   </div>
                 </div>
               </div>
@@ -1522,8 +1622,8 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </section>
 
           <section v-else-if="activeView === 'page'" class="h-full">
-            <div class="grid h-[calc(100%-32px)] min-h-0 grid-cols-[320px_1fr] gap-5">
-              <aside class="soft-card scrollable min-h-0 overflow-auto p-4" data-no-window-drag>
+            <div class="grid h-[calc(100%-12px)] min-h-0 grid-cols-[320px_1fr] gap-5">
+              <aside class="soft-card scrollable page-settings-panel min-h-0 overflow-auto p-4" data-no-window-drag>
                 <div class="editor-section-card">
                   <div class="editor-section-head">
                     <h3>格子矩阵</h3>
@@ -1578,16 +1678,24 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 </div>
                 <p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p>
               </aside>
-              <div class="soft-card grid min-h-0 place-items-center p-5">
+              <div class="soft-card flex min-h-0 flex-col p-5">
                 <div class="mb-4 flex w-full items-center justify-between gap-3">
                   <div>
                     <h3 class="text-[14px] font-semibold">页面预览</h3>
                     <p class="mt-1 text-[12px] text-slate-500">开启真实预览后，格子会显示绑定组件保存时的内容。</p>
                   </div>
-                  <button class="header-surface-button" :class="pageLivePreview ? 'ring-2 ring-sky-400' : ''" @click="enablePageLivePreview">{{ pageLivePreview ? '关闭真实预览' : '开启真实预览' }}</button>
+                  <div class="page-preview-controls">
+                    <label class="field-label page-ratio-input"><span>宽</span><input v-model.number="pagePreviewRatioWidth" type="number" min="1" class="field" @input="measurePagePreviewFrame" /></label>
+                    <button class="ratio-swap-button" title="对调宽高比例" @click="swapPagePreviewRatio">
+                      <Icon icon="solar:transfer-horizontal-bold-duotone" class="size-4" />
+                    </button>
+                    <label class="field-label page-ratio-input"><span>高</span><input v-model.number="pagePreviewRatioHeight" type="number" min="1" class="field" @input="measurePagePreviewFrame" /></label>
+                    <button class="header-surface-button" :class="pageLivePreview ? 'ring-2 ring-sky-400' : ''" @click="enablePageLivePreview">{{ pageLivePreview ? '关闭真实预览' : '开启真实预览' }}</button>
+                  </div>
                 </div>
-                <div ref="pagePreviewFrameEl" class="page-preview-frame w-full max-w-[460px] max-h-full overflow-hidden rounded-[24px] bg-slate-100 dark:bg-slate-800" :class="pagePreviewAspect" :style="pagePreviewBackgroundStyle">
-                  <div class="page-grid-preview" :style="pageGridStyle">
+                <div ref="pagePreviewStageEl" class="page-preview-stage">
+                  <div class="page-preview-frame overflow-hidden rounded-[24px] bg-slate-100 dark:bg-slate-800" :style="pagePreviewFrameStyle">
+                    <div class="page-grid-preview" :style="pageGridStyle">
                     <button
                       v-for="cell in selectedPage?.cells"
                       :key="cell.id"
@@ -1606,6 +1714,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                       </template>
                       <span v-else-if="cell.componentId" class="grid h-full place-items-center px-1 text-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span>
                     </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1850,7 +1959,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </section>
         </div>
 
-        <footer class="h-8 shrink-0"><div v-if="exporting" class="mt-3 h-1.5 overflow-hidden rounded-full bg-white dark:bg-slate-900"><div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${exportProgress}%` }"></div></div></footer>
+        <footer class="h-3 shrink-0"><div v-if="exporting" class="mt-1 h-1.5 overflow-hidden rounded-full bg-white dark:bg-slate-900"><div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${exportProgress}%` }"></div></div></footer>
       </section>
     </section>
 

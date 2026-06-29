@@ -8,6 +8,8 @@ export interface VisualTextLayer {
   position: string;
   x: number;
   y: number;
+  width: number;
+  height: number;
 }
 
 export interface VisualConfig {
@@ -43,6 +45,8 @@ export function defaultVisualConfig(component?: ComponentDefinition): VisualConf
         position: "center",
         x: 50,
         y: 50,
+        width: 58,
+        height: 18,
       },
     ],
     image: { source: "", size: "cover", position: "center", margin: 0 },
@@ -91,7 +95,7 @@ export function generatedComponentCode(component?: ComponentDefinition, config?:
   const background = visualBackgroundCode(visual);
   const textNodes = visual.texts.map((text) => {
     const content = escapeHtml(text.content || "文字");
-    return `    <span class="onedesk-text-layer" style="left: ${normalizePercent(text.x, 50)}%; top: ${normalizePercent(text.y, 50)}%; font-size: ${Number(text.fontSize) || 14}px; color: ${escapeHtml(text.color || "#ffffff")};">${content}</span>`;
+    return `    <span class="onedesk-text-layer" style="left: ${normalizePercent(text.x, 50)}%; top: ${normalizePercent(text.y, 50)}%; width: ${normalizeLayerSize(text.width, 58)}%; min-height: ${normalizeLayerSize(text.height, 18)}%; font-size: ${Number(text.fontSize) || 14}px; color: ${escapeHtml(text.color || "#ffffff")};">${content}</span>`;
   }).join("\n");
 
   return `<script setup lang="ts">
@@ -131,7 +135,12 @@ ${textNodes || "    <span class=\"onedesk-text-layer\">{{ title }}</span>"}
   position: absolute;
   z-index: 1;
   transform: translate(-50%, -50%);
-  white-space: nowrap;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  text-align: center;
+  overflow-wrap: anywhere;
+  white-space: normal;
   pointer-events: none;
 }
 </style>`;
@@ -292,6 +301,8 @@ function normalizeTextLayers(parsed: Record<string, unknown>, fallback: VisualCo
         position: String(layer.position ?? "center"),
         x: normalizePercent(layer.x, fallbackPosition.x),
         y: normalizePercent(layer.y, fallbackPosition.y),
+        width: normalizeLayerSize(layer.width, 58),
+        height: normalizeLayerSize(layer.height, 18),
       };
     });
   }
@@ -308,6 +319,8 @@ function normalizeTextLayers(parsed: Record<string, unknown>, fallback: VisualCo
         position: String(legacyText.position ?? "center"),
         x: normalizePercent(legacyText.x, fallbackPosition.x),
         y: normalizePercent(legacyText.y, fallbackPosition.y),
+        width: normalizeLayerSize(legacyText.width, 58),
+        height: normalizeLayerSize(legacyText.height, 18),
       },
     ];
   }
@@ -340,6 +353,11 @@ function clampGridCount(value: number) {
 function normalizePercent(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? clampPercent(parsed) : fallback;
+}
+
+function normalizeLayerSize(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(4, Math.min(100, parsed)) : fallback;
 }
 
 function clampPercent(value: number) {

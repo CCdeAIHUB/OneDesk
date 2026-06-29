@@ -186,6 +186,8 @@ header p {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 16px;
   justify-content: start;
+  margin-top: 8px;
+  padding-top: 2px;
 }
 
 .manager-grid > * {
@@ -301,10 +303,11 @@ header p {
 
 .field {
   width: 100%;
+  height: 36px;
   border-radius: 12px;
   border: 1px solid transparent;
   background: rgb(255 255 255);
-  padding: 8px 10px;
+  padding: 0 10px;
   color: rgb(15 23 42);
   outline: none;
   transition: all 300ms ease;
@@ -715,7 +718,7 @@ select.field {
 /* 分区标题内的小按钮：固定高度以适配高 DPI */
 .editor-inline-button {
   display: inline-flex;
-  height: 28px;
+  height: 36px;
   flex-shrink: 0;
   align-items: center;
   gap: 5px;
@@ -809,8 +812,8 @@ select.field {
 
 .editor-icon-button {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   place-items: center;
   border-radius: 8px;
@@ -857,6 +860,7 @@ select.field {
 }
 
 .editor-section-card .field {
+  height: 36px;
   background: rgb(248 250 252);
   border-color: rgb(226 232 240 / 0.7);
 }
@@ -949,6 +953,45 @@ select.field {
   min-height: 0;
 }
 
+.page-preview-stage {
+  display: grid;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  place-items: center;
+  overflow: hidden;
+}
+
+.page-preview-controls {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.page-ratio-input {
+  width: 68px;
+}
+
+.ratio-swap-button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid rgb(14 165 233 / 0.28);
+  background: rgb(255 255 255);
+  color: rgb(2 132 199);
+  box-shadow: 0 10px 24px rgb(15 23 42 / 0.05);
+}
+
+.dark .ratio-swap-button {
+  background: rgb(15 23 42);
+  color: rgb(125 211 252);
+}
+
 .page-grid-preview {
   display: grid;
   width: 100%;
@@ -979,9 +1022,45 @@ select.field {
   font-weight: 700;
 }
 
+.component-text-layer {
+  border: 1px dashed rgb(255 255 255 / 0.42);
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+.component-text-layer:hover {
+  border-color: rgb(14 165 233 / 0.8);
+}
+
+.component-text-resize-handle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgb(255 255 255);
+  border-radius: 999px;
+  background: rgb(14 165 233);
+  box-shadow: 0 6px 14px rgb(14 165 233 / 0.35);
+  cursor: nwse-resize;
+}
+
+.page-settings-panel.scrollable {
+  padding-right: 18px;
+}
+
+.page-settings-panel .editor-section-card {
+  padding: 0;
+}
+
+:root:not(.dark) .page-settings-panel .editor-section-card {
+  background: transparent;
+  box-shadow: none;
+}
+
 .resource-pick-button {
   display: flex;
-  height: 32px;
+  height: 36px;
   align-items: center;
   justify-content: center;
   gap: 6px;
