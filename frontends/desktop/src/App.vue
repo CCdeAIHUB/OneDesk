@@ -69,6 +69,7 @@ const permissionSourceKind = ref<"component" | "plugin">("component");
 const permissionSourceId = ref("");
 const visualConfig = ref<VisualConfig>(defaultVisualConfig());
 let toastSequence = 0;
+let componentLoadSequence = 0;
 
 const triggerCatalog: Array<{ category: string; label: string; triggers: Array<{ id: string; displayName: string; fingerCount?: number }> }> = [
   {
@@ -486,8 +487,12 @@ async function enablePageLivePreview() {
 
 function componentPreviewForCell(componentId?: string | null) {
   const component = workspace.components.find((item) => item.id === componentId);
-  const config = componentId ? componentVisualCache.value[componentId] : null;
+  const config = componentId ? (componentVisualCache.value[componentId] ?? parseVisualConfig(undefined, component)) : null;
   return { component, config };
+}
+
+function componentPreviewTextsForCell(componentId?: string | null) {
+  return componentPreviewForCell(componentId).config?.texts ?? [];
 }
 
 function navIcon(item: (typeof navItems)[number]) {
@@ -496,6 +501,7 @@ function navIcon(item: (typeof navItems)[number]) {
 
 function openView(view: ViewKey) {
   activeView.value = view;
+  if (view !== "component") componentLoadSequence += 1;
   if (view === "component") componentRoute.value = "manager";
   if (view === "page") pageRoute.value = "manager";
   if (view === "scheme") schemeRoute.value = "manager";
@@ -585,11 +591,13 @@ function handleWindowPointerMove(event: PointerEvent) {
 }
 
 async function chooseComponent(component: ComponentDefinition) {
+  const loadSequence = ++componentLoadSequence;
   workspace.selectedComponentId = component.id;
   componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
   componentVisualSection.value = "base";
-  componentCodeDraft.value = generatedComponentCode(component, visualConfig.value);
-  await loadComponentFiles(component);
+  await loadComponentFiles(component, loadSequence);
+  if (loadSequence !== componentLoadSequence || workspace.selectedComponentId !== component.id) return;
+  componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
   componentRoute.value = "editor";
 }
 
@@ -830,6 +838,7 @@ async function saveComponent() {
     codeFileDrafts.value[selectedCodeFile.value] = componentCodeDraft.value;
     selectedComponent.value.editMode = "code";
     selectedComponent.value.visualConfigFile = null;
+    codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
   } else {
     codeFileDrafts.value["onedesk.visual.json"] = JSON.stringify(visualConfig.value, null, 2);
     codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
@@ -1007,11 +1016,12 @@ function syncVisualCodeDraft() {
   codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
 }
 
-async function loadComponentFiles(component?: ComponentDefinition) {
+async function loadComponentFiles(component?: ComponentDefinition, loadSequence = componentLoadSequence) {
   visualConfig.value = parseVisualConfig(undefined, component);
   hydrateCodeFiles(component);
   if (!component?.id) return;
   const response = await sendShell<Record<string, string>>("workspace.readComponentFiles", { id: component.id });
+  if (loadSequence !== componentLoadSequence || workspace.selectedComponentId !== component.id) return;
   if (response.ok && response.payload && Object.keys(response.payload).length) {
     codeFileDrafts.value = {
       ...codeFileDrafts.value,
@@ -1706,10 +1716,10 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     >
                       <template v-if="pageLivePreview && cell.componentId">
                         <span class="component-live-tile" :style="componentTileStyle(componentPreviewForCell(cell.componentId).config)">
-                          <template v-for="(text, ti) in (componentPreviewForCell(cell.componentId).config?.texts ?? [])" :key="text.id">
-                            <span class="absolute" :style="textPositionStyle(text.position, ti, (componentPreviewForCell(cell.componentId).config?.texts?.length ?? 1), text.x, text.y)"><span :style="{ fontSize: `${text.fontSize ?? 12}px`, color: text.color ?? '#ffffff' }">{{ text.content || componentPreviewForCell(cell.componentId).component?.name }}</span></span>
+                          <template v-for="(text, ti) in componentPreviewTextsForCell(cell.componentId)" :key="text.id">
+                            <span class="absolute" :style="textPositionStyle(text.position, ti, componentPreviewTextsForCell(cell.componentId).length || 1, text.x, text.y)"><span :style="{ fontSize: `${text.fontSize ?? 12}px`, color: text.color ?? '#ffffff' }">{{ text.content || componentPreviewForCell(cell.componentId).component?.name }}</span></span>
                           </template>
-                          <span v-if="!(componentPreviewForCell(cell.componentId).config?.texts?.length)" :style="{ fontSize: '12px' }">{{ componentPreviewForCell(cell.componentId).component?.name }}</span>
+                          <span v-if="!componentPreviewTextsForCell(cell.componentId).length" :style="{ fontSize: '12px' }">{{ componentPreviewForCell(cell.componentId).component?.name }}</span>
                         </span>
                       </template>
                       <span v-else-if="cell.componentId" class="grid h-full place-items-center px-1 text-center">{{ workspace.components.find((item) => item.id === cell.componentId)?.name }}</span>
