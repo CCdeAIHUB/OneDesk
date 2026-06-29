@@ -370,6 +370,7 @@ public sealed partial class MainForm : Form
             _browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
             _browser.CoreWebView2.WebMessageReceived += Browser_OnWebMessageReceived;
             _browser.CoreWebView2.NavigationCompleted += Browser_OnNavigationCompleted;
+            _browser.CoreWebView2.ProcessFailed += Browser_OnProcessFailed;
             _browser.CoreWebView2.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             _browser.CoreWebView2.WebResourceRequested += Browser_OnWebResourceRequested;
 
@@ -394,6 +395,27 @@ public sealed partial class MainForm : Form
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         }
+    }
+
+    private void Browser_OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        var reason = e.Reason.ToString();
+        var kind = e.ProcessFailedKind.ToString();
+        var message = $"WebView2 进程异常终止：{kind} / {reason} / {e.ExitCode}";
+        AppDiagnostics.Write(message);
+        _logs?.Append(
+            _devices?.DesktopIdentity.DeviceId ?? "desktop",
+            "Error",
+            "Chromium",
+            message,
+            new Dictionary<string, object?>
+            {
+                ["processFailedKind"] = kind,
+                ["reason"] = reason,
+                ["exitCode"] = e.ExitCode,
+                ["processDescription"] = e.ProcessDescription,
+                ["source"] = _browser?.Source?.ToString() ?? ""
+            });
     }
 
     private async void Browser_OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)

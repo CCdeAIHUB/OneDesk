@@ -1584,15 +1584,13 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               </div>
               <div ref="componentPreviewEl" class="mt-4 grid overflow-hidden rounded-[22px] shadow-lg shadow-sky-500/18" :style="[previewAspectStyle, componentPreviewStyle]">
                 <div class="relative h-full w-full overflow-hidden text-center">
-                  <video
-                    v-if="componentPreviewVideoSource"
-                    class="absolute inset-0 h-full w-full object-cover"
-                    :src="componentPreviewVideoSource"
-                    autoplay
-                    muted
-                    loop
-                    playsinline
-                  ></video>
+                  <div v-if="componentPreviewVideoSource" class="absolute inset-0 grid place-items-center bg-slate-950/80 px-4 text-center">
+                    <div class="grid justify-items-center gap-2 text-white">
+                      <Icon icon="solar:video-frame-play-horizontal-bold-duotone" class="size-8 text-sky-300" />
+                      <p class="text-[12px] font-semibold">视频背景</p>
+                      <p class="max-w-[180px] truncate text-[10px] text-slate-300">{{ componentPreviewVideoSource.split('/').pop() }}</p>
+                    </div>
+                  </div>
                   <div
                     v-for="(text, index) in visualConfig.texts"
                     :key="text.id"
