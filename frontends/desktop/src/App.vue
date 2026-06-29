@@ -69,6 +69,8 @@ const permissionSourceKind = ref<"component" | "plugin">("component");
 const permissionSourceId = ref("");
 const visualConfig = ref<VisualConfig>(defaultVisualConfig());
 const loadingComponentId = ref("");
+const componentVideoPreviewState = ref<"idle" | "loading" | "ready" | "error">("idle");
+const componentVideoPreviewKey = ref(0);
 let toastSequence = 0;
 let componentLoadSequence = 0;
 
@@ -163,6 +165,13 @@ const componentVisualSections = [
 const componentPreviewStyle = computed(() => buildComponentPreviewStyle(visualConfig.value));
 const componentPreviewVideoSource = computed(() => visualVideoSource(visualConfig.value));
 const componentHasEnteredCodeMode = computed(() => componentEditorMode.value === "code" || String(selectedComponent.value?.editMode).toLowerCase() === "code");
+const isComponentVideoPreviewActive = computed(() =>
+  activeView.value === "component" &&
+  componentRoute.value === "editor" &&
+  componentEditorMode.value === "visual" &&
+  Boolean(componentPreviewVideoSource.value),
+);
+const componentVideoPreviewLabel = computed(() => componentVideoPreviewState.value === "error" ? "\u89c6\u9891\u52a0\u8f7d\u5931\u8d25" : "\u89c6\u9891\u52a0\u8f7d\u4e2d");
 const pagePreviewBackgroundStyle = computed(() => pageBackgroundStyle(selectedPage.value));
 const pagePreviewFrameStyle = computed(() => {
   const size = pagePreviewFrameSize.value;
@@ -342,6 +351,17 @@ watch(() => selectedComponent.value?.name, () => {
 });
 
 watch(
+  () => [componentPreviewVideoSource.value, activeView.value, componentRoute.value, componentEditorMode.value] as const,
+  ([source]) => {
+    unloadComponentVideoPreview();
+    if (source && isComponentVideoPreviewActive.value) {
+      nextTick(() => startComponentVideoPreview());
+    }
+  },
+  { immediate: true },
+);
+
+watch(
   () => [selectedPage.value?.id, selectedPage.value?.rows, selectedPage.value?.columns],
   () => ensurePageGridCells(selectedPage.value),
   { immediate: true },
@@ -360,6 +380,32 @@ function announceToast(message: string) {
   window.setTimeout(() => {
     workspace.toast = message;
   }, 0);
+}
+
+function startComponentVideoPreview() {
+  if (!componentPreviewVideoSource.value || !isComponentVideoPreviewActive.value) {
+    unloadComponentVideoPreview();
+    return;
+  }
+  componentVideoPreviewKey.value += 1;
+  componentVideoPreviewState.value = "loading";
+}
+
+function unloadComponentVideoPreview() {
+  componentVideoPreviewKey.value += 1;
+  componentVideoPreviewState.value = "idle";
+}
+
+function markComponentVideoReady() {
+  if (componentVideoPreviewState.value !== "idle") {
+    componentVideoPreviewState.value = "ready";
+  }
+}
+
+function markComponentVideoError() {
+  if (componentVideoPreviewState.value !== "idle") {
+    componentVideoPreviewState.value = "error";
+  }
 }
 
 function normalizeName(name: string) {
@@ -1591,10 +1637,26 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               </div>
               <div ref="componentPreviewEl" class="mt-4 grid overflow-hidden rounded-[22px] shadow-lg shadow-sky-500/18" :style="[previewAspectStyle, componentPreviewStyle]">
                 <div class="relative h-full w-full overflow-hidden text-center">
-                  <div v-if="componentPreviewVideoSource" class="absolute inset-0 grid place-items-center bg-slate-950/80 px-4 text-center">
+                  <video
+                    v-if="isComponentVideoPreviewActive && componentVideoPreviewState !== 'idle'"
+                    :key="componentVideoPreviewKey"
+                    class="absolute inset-0 h-full w-full object-cover"
+                    :src="componentPreviewVideoSource"
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                    preload="auto"
+                    @loadstart="componentVideoPreviewState = 'loading'"
+                    @loadeddata="markComponentVideoReady"
+                    @canplay="markComponentVideoReady"
+                    @error="markComponentVideoError"
+                  ></video>
+                  <div v-if="componentPreviewVideoSource && componentVideoPreviewState !== 'ready'" class="absolute inset-0 z-[1] grid place-items-center bg-slate-950/80 px-4 text-center">
                     <div class="grid justify-items-center gap-2 text-white">
                       <Icon icon="solar:video-frame-play-horizontal-bold-duotone" class="size-8 text-sky-300" />
-                      <p class="text-[12px] font-semibold">视频背景</p>
+                      <p class="text-[12px] font-semibold">{{ componentVideoPreviewLabel }}</p>
+                      <div v-if="componentVideoPreviewState === 'loading'" class="video-preview-progress"><span></span></div>
                       <p class="max-w-[180px] truncate text-[10px] text-slate-300">{{ componentPreviewVideoSource.split('/').pop() }}</p>
                     </div>
                   </div>

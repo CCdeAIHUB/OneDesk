@@ -1043,6 +1043,33 @@ select.field {
   cursor: nwse-resize;
 }
 
+.video-preview-progress {
+  width: 128px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.18);
+}
+
+.video-preview-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: rgb(14 165 233);
+  animation: video-preview-progress 1.1s ease-in-out infinite;
+}
+
+@keyframes video-preview-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 .page-settings-panel.scrollable {
   padding-right: 18px;
 }
