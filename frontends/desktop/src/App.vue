@@ -2,6 +2,7 @@
 import { Icon } from "@iconify/vue";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import QRCode from "qrcode";
+import CodeMirrorEditor from "./components/CodeMirrorEditor.vue";
 import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, sendShell, setShellTheme, startWindowDrag, startWindowResize } from "./nativeBridge";
@@ -16,6 +17,7 @@ import {
   pageGridStyle as buildPageGridStyle,
   parseVisualConfig,
   textPositionStyle,
+  visualVideoSource,
   type VisualConfig,
 } from "./editorVisualConfig";
 
@@ -55,6 +57,8 @@ const showResourcePicker = ref(false);
 const resourcePickerTarget = ref<"page-background" | "component-background" | null>(null);
 const componentVisualCache = ref<Record<string, VisualConfig>>({});
 const pendingDelete = ref<{ kind: "component" | "page" | "scheme" | "plugin" | "action"; id: string; name: string } | null>(null);
+const componentPreviewEl = ref<HTMLElement | null>(null);
+const draggingTextLayerId = ref<string | null>(null);
 const enableStartup = ref(false);
 const connectionPort = ref(48320);
 const toasts = ref<Array<{ id: number; message: string }>>([]);
@@ -152,6 +156,8 @@ const componentVisualSections = [
 ] as const;
 
 const componentPreviewStyle = computed(() => buildComponentPreviewStyle(visualConfig.value));
+const componentPreviewVideoSource = computed(() => visualVideoSource(visualConfig.value));
+const componentHasEnteredCodeMode = computed(() => componentEditorMode.value === "code" || String(selectedComponent.value?.editMode).toLowerCase() === "code");
 const pagePreviewBackgroundStyle = computed(() => pageBackgroundStyle(selectedPage.value));
 const resourcePickerTitle = computed(() => resourcePickerTarget.value === "component-background" ? "选择组件媒体资源" : "选择页面媒体资源");
 const resourcePickerKind = computed(() => {
@@ -280,6 +286,14 @@ watch(() => [selectedPage.value?.rows, selectedPage.value?.columns, selectedPage
 watch(() => workspace.toast, (message) => {
   if (!message || workspace.loading) return;
   pushToast(message);
+});
+
+watch(visualConfig, () => {
+  syncVisualCodeDraft();
+}, { deep: true });
+
+watch(() => selectedComponent.value?.name, () => {
+  syncVisualCodeDraft();
 });
 
 watch(
@@ -531,7 +545,7 @@ async function chooseComponent(component: ComponentDefinition) {
   workspace.selectedComponentId = component.id;
   componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
   componentVisualSection.value = "base";
-  componentCodeDraft.value = generatedComponentCode(component);
+  componentCodeDraft.value = generatedComponentCode(component, visualConfig.value);
   await loadComponentFiles(component);
   componentRoute.value = "editor";
 }
@@ -606,6 +620,25 @@ function requestCodeMode() {
   showCodeSwitchDialog.value = true;
 }
 
+function requestVisualMode() {
+  if (componentHasEnteredCodeMode.value) {
+    announceToast("代码编辑模式不可回退到可视化编辑");
+    return;
+  }
+  componentEditorMode.value = "visual";
+}
+
+async function confirmCodeMode() {
+  if (!selectedComponent.value) return;
+  syncVisualCodeDraft();
+  selectedComponent.value.editMode = "code";
+  selectedComponent.value.visualConfigFile = null;
+  componentEditorMode.value = "code";
+  showCodeSwitchDialog.value = false;
+  codeFileDrafts.value[selectedCodeFile.value] = componentCodeDraft.value;
+  await saveComponent();
+}
+
 async function createComponent() {
   const id = `component-${crypto.randomUUID()}`;
   const name = ensureUniqueDraftName("\u65b0\u7ec4\u4ef6");
@@ -636,7 +669,7 @@ async function createComponent() {
     componentEditorMode.value = "visual";
     componentVisualSection.value = "base";
     visualConfig.value = parseVisualConfig(undefined, component);
-    componentCodeDraft.value = generatedComponentCode(component);
+    componentCodeDraft.value = generatedComponentCode(component, visualConfig.value);
     hydrateCodeFiles(component);
 
     const fileResponse = await sendShell<Record<string, string>>("workspace.saveComponentFiles", { id: component.id, files: codeFileDrafts.value });
@@ -651,7 +684,7 @@ async function createComponent() {
     componentRoute.value = "editor";
     componentVisualSection.value = "base";
     visualConfig.value = parseVisualConfig(codeFileDrafts.value["onedesk.visual.json"], component);
-    componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value] ?? generatedComponentCode(component);
+    componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value] ?? generatedComponentCode(component, visualConfig.value);
     announceToast("\u7ec4\u4ef6\u5df2\u521b\u5efa");
   } catch (error) {
     console.error("createComponent failed", error);
@@ -820,6 +853,8 @@ function addVisualText() {
     fontSize: 14,
     color: "#ffffff",
     position: "center",
+    x: 50,
+    y: 50,
   });
 }
 
@@ -829,16 +864,57 @@ function removeVisualText(id: string) {
   visualConfig.value.texts = visualConfig.value.texts.filter((t) => t.id !== id);
 }
 
+function beginDragTextLayer(event: PointerEvent, textId: string) {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) return;
+  draggingTextLayerId.value = textId;
+  target.setPointerCapture(event.pointerId);
+  updateTextLayerFromPointer(event, textId);
+}
+
+function dragTextLayer(event: PointerEvent, textId: string) {
+  if (draggingTextLayerId.value !== textId) return;
+  updateTextLayerFromPointer(event, textId);
+}
+
+function endDragTextLayer(event: PointerEvent) {
+  const target = event.currentTarget;
+  if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
+    target.releasePointerCapture(event.pointerId);
+  }
+  draggingTextLayerId.value = null;
+}
+
+function updateTextLayerFromPointer(event: PointerEvent, textId: string) {
+  const frame = componentPreviewEl.value;
+  const text = visualConfig.value.texts.find((item) => item.id === textId);
+  if (!frame || !text) return;
+  const rect = frame.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  text.x = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
+  text.y = Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100));
+  text.position = "custom";
+}
+
 function hydrateCodeFiles(component?: ComponentDefinition) {
   selectedCodeFile.value = "src/Component.vue";
   const config = visualConfig.value;
   codeFileDrafts.value = {
-    "src/Component.vue": generatedComponentCode(component),
+    "src/Component.vue": generatedComponentCode(component, config),
     "src/onedesk.actions.json": JSON.stringify(workspace.actions.filter((action) => component?.actionIds.includes(action.id)), null, 2),
     "onedesk.component.json": JSON.stringify(component ?? {}, null, 2),
     "onedesk.visual.json": JSON.stringify(config, null, 2),
   };
   componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value];
+}
+
+function syncVisualCodeDraft() {
+  if (componentEditorMode.value !== "visual" || !selectedComponent.value) return;
+  const generated = generatedComponentCode(selectedComponent.value, visualConfig.value);
+  codeFileDrafts.value["src/Component.vue"] = generated;
+  if (selectedCodeFile.value === "src/Component.vue") componentCodeDraft.value = generated;
+  codeFileDrafts.value["onedesk.visual.json"] = JSON.stringify(visualConfig.value, null, 2);
+  codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
 }
 
 async function loadComponentFiles(component?: ComponentDefinition) {
@@ -1310,7 +1386,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             >
               <div class="mb-5 flex items-center gap-2">
                 <div class="editor-toggle-group">
-                  <button :class="componentEditorMode === 'visual' ? 'editor-toggle-active' : ''" @click="componentEditorMode = 'visual'">可视化</button>
+                  <button :class="componentEditorMode === 'visual' ? 'editor-toggle-active' : ''" :disabled="componentHasEnteredCodeMode" @click="requestVisualMode">可视化</button>
                   <button :class="componentEditorMode === 'code' ? 'editor-toggle-active' : ''" @click="requestCodeMode">代码</button>
                 </div>
               </div>
@@ -1398,7 +1474,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               </div>
               <div v-else class="overflow-hidden rounded-[18px] bg-slate-950">
                 <div class="flex h-9 items-center border-b border-slate-800 px-4 text-[12px] text-slate-400">{{ selectedCodeFile }}</div>
-                <textarea v-model="componentCodeDraft" class="scrollable h-[390px] w-full resize-none overflow-auto bg-slate-950 p-4 font-mono text-[12px] leading-6 text-sky-100 outline-none" data-no-window-drag spellcheck="false"></textarea>
+                <CodeMirrorEditor v-model="componentCodeDraft" :filename="selectedCodeFile" class="h-[390px]" />
               </div>
             </section>
             <aside class="soft-card scrollable min-h-0 min-w-0 overflow-auto p-3" data-no-window-drag>
@@ -1406,13 +1482,27 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <h3 class="min-w-0 text-[13px] font-semibold">实时预览</h3>
                 <label class="field-label ratio-field"><span>比例</span><input v-model="previewRatio" class="field h-8 px-2 text-center" placeholder="1:1" /></label>
               </div>
-              <div class="mt-4 grid overflow-hidden rounded-[22px] shadow-lg shadow-sky-500/18" :style="[previewAspectStyle, componentPreviewStyle]">
+              <div ref="componentPreviewEl" class="mt-4 grid overflow-hidden rounded-[22px] shadow-lg shadow-sky-500/18" :style="[previewAspectStyle, componentPreviewStyle]">
                 <div class="relative h-full w-full overflow-hidden text-center">
+                  <video
+                    v-if="componentPreviewVideoSource"
+                    class="absolute inset-0 h-full w-full object-cover"
+                    :src="componentPreviewVideoSource"
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                  ></video>
                   <div
                     v-for="(text, index) in visualConfig.texts"
                     :key="text.id"
-                    class="absolute px-2 py-1"
-                    :style="textPositionStyle(text.position, index, visualConfig.texts.length)"
+                    class="absolute z-[1] cursor-move select-none rounded-xl px-2 py-1 transition-shadow hover:bg-slate-950/20 hover:shadow-lg"
+                    :style="textPositionStyle(text.position, index, visualConfig.texts.length, text.x, text.y)"
+                    data-no-window-drag
+                    @pointerdown.stop.prevent="beginDragTextLayer($event, text.id)"
+                    @pointermove.stop.prevent="dragTextLayer($event, text.id)"
+                    @pointerup.stop.prevent="endDragTextLayer"
+                    @pointercancel.stop.prevent="endDragTextLayer"
                   >
                     <p class="font-semibold" :style="{ fontSize: `${text.fontSize}px`, color: text.color }">{{ text.content || '文字' }}</p>
                   </div>
@@ -1509,7 +1599,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                       <template v-if="pageLivePreview && cell.componentId">
                         <span class="component-live-tile" :style="componentTileStyle(componentPreviewForCell(cell.componentId).config)">
                           <template v-for="(text, ti) in (componentPreviewForCell(cell.componentId).config?.texts ?? [])" :key="text.id">
-                            <span class="absolute" :style="textPositionStyle(text.position, ti, (componentPreviewForCell(cell.componentId).config?.texts?.length ?? 1))"><span :style="{ fontSize: `${text.fontSize ?? 12}px`, color: text.color ?? '#ffffff' }">{{ text.content || componentPreviewForCell(cell.componentId).component?.name }}</span></span>
+                            <span class="absolute" :style="textPositionStyle(text.position, ti, (componentPreviewForCell(cell.componentId).config?.texts?.length ?? 1), text.x, text.y)"><span :style="{ fontSize: `${text.fontSize ?? 12}px`, color: text.color ?? '#ffffff' }">{{ text.content || componentPreviewForCell(cell.componentId).component?.name }}</span></span>
                           </template>
                           <span v-if="!(componentPreviewForCell(cell.componentId).config?.texts?.length)" :style="{ fontSize: '12px' }">{{ componentPreviewForCell(cell.componentId).component?.name }}</span>
                         </span>
@@ -1894,7 +1984,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
       </div>
     </div>
     <div v-if="showCodeSwitchDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
-      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><Icon icon="solar:danger-triangle-bold-duotone" class="size-9 text-amber-500" /><h3 class="mt-3 text-[16px] font-semibold">切换到代码编辑？</h3><p class="mt-2 text-[13px] leading-6 text-slate-500">切换后无法回到可视化编辑，因为任意 Vue 代码无法完整还原为可视化配置。</p><div class="mt-4 flex gap-2"><button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="showCodeSwitchDialog = false">取消</button><button class="flex-1 rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="componentCodeDraft = generatedComponentCode(selectedComponent); componentEditorMode = 'code'; showCodeSwitchDialog = false">继续</button></div></div>
+      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><Icon icon="solar:danger-triangle-bold-duotone" class="size-9 text-amber-500" /><h3 class="mt-3 text-[16px] font-semibold">切换到代码编辑？</h3><p class="mt-2 text-[13px] leading-6 text-slate-500">切换后无法回到可视化编辑，因为任意 Vue 代码无法完整还原为可视化配置。</p><div class="mt-4 flex gap-2"><button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="showCodeSwitchDialog = false">取消</button><button class="flex-1 rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="confirmCodeMode">继续</button></div></div>
     </div>
 
     <div v-if="pendingDelete" class="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">

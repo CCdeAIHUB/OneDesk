@@ -6,6 +6,8 @@ export interface VisualTextLayer {
   fontSize: number;
   color: string;
   position: string;
+  x: number;
+  y: number;
 }
 
 export interface VisualConfig {
@@ -39,6 +41,8 @@ export function defaultVisualConfig(component?: ComponentDefinition): VisualConf
         fontSize: 14,
         color: "#ffffff",
         position: "center",
+        x: 50,
+        y: 50,
       },
     ],
     image: { source: "", size: "cover", position: "center", margin: 0 },
@@ -81,9 +85,56 @@ export function parseVisualConfig(json: string | undefined, component?: Componen
   }
 }
 
-export function generatedComponentCode(component?: ComponentDefinition) {
-  const name = component?.name ?? "新组件";
-  return `<script setup lang="ts">\nconst title = '${name}'\n<\/script>\n\n<template>\n  <button class="onedesk-control-tile">{{ title }}</button>\n</template>\n\n<style scoped>\n.onedesk-control-tile {\n  width: 100%;\n  height: 100%;\n  border-radius: 16px;\n  overflow: hidden;\n  background: linear-gradient(135deg, #0ea5e9, #22d3ee);\n  color: white;\n  font-size: 14px;\n  font-weight: 700;\n}\n</style>`;
+export function generatedComponentCode(component?: ComponentDefinition, config?: VisualConfig) {
+  const visual = config ?? defaultVisualConfig(component);
+  const title = escapeSingleQuote(component?.name ?? "新组件");
+  const background = visualBackgroundCode(visual);
+  const textNodes = visual.texts.map((text) => {
+    const content = escapeHtml(text.content || "文字");
+    return `    <span class="onedesk-text-layer" style="left: ${normalizePercent(text.x, 50)}%; top: ${normalizePercent(text.y, 50)}%; font-size: ${Number(text.fontSize) || 14}px; color: ${escapeHtml(text.color || "#ffffff")};">${content}</span>`;
+  }).join("\n");
+
+  return `<script setup lang="ts">
+const title = '${title}'
+<\/script>
+
+<template>
+  <button class="onedesk-control-tile" type="button" aria-label="${escapeHtml(component?.name ?? "新组件")}">
+${background.template}
+${textNodes || "    <span class=\"onedesk-text-layer\">{{ title }}</span>"}
+  </button>
+</template>
+
+<style scoped>
+.onedesk-control-tile {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  margin: ${Number(visual.base.margin) || 0}px;
+  border: 0;
+  border-radius: ${Number(visual.base.borderRadius) || 0}px;
+  overflow: hidden;
+  background: ${background.css};
+  color: white;
+  font-weight: 700;
+}
+
+.onedesk-video-background {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.onedesk-text-layer {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+</style>`;
 }
 
 export function componentPreviewStyle(config: VisualConfig): Record<string, string> {
@@ -149,7 +200,15 @@ export function pageGridStyle(page: PageDefinition | undefined, metrics: PageGri
   };
 }
 
-export function textPositionStyle(position: string, index: number, total: number): Record<string, string> {
+export function textPositionStyle(position: string, index: number, total: number, x?: number, y?: number): Record<string, string> {
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    return {
+      left: `${normalizePercent(x, 50)}%`,
+      top: `${normalizePercent(y, 50)}%`,
+      transform: "translate(-50%, -50%)",
+    };
+  }
+
   const base: Record<string, string> = {};
   if (position === "left") {
     base.left = "8px";
@@ -187,6 +246,11 @@ export function textPositionStyle(position: string, index: number, total: number
   return base;
 }
 
+export function visualVideoSource(config?: VisualConfig | null) {
+  if (!config || config.background.kind !== "video") return "";
+  return config.background.mediaSource || "";
+}
+
 export function applyDpiScaling(root: HTMLElement, dpr = window.devicePixelRatio || 1) {
   const remBase = Math.round(Math.min(Math.max(16, 16 + (dpr - 1) * 4), 19));
   root.style.setProperty("--onedesk-rem-base", String(remBase));
@@ -200,23 +264,41 @@ function visualBackgroundToCss(background: VisualConfig["background"], imageSize
   return gradientPresets["sky-cyan"];
 }
 
+function visualBackgroundCode(config: VisualConfig) {
+  const background = config.background;
+  if (background.kind === "solid") return { css: background.value || "#0ea5e9", template: "" };
+  if (background.kind === "gradient") return { css: `linear-gradient(135deg, ${background.value || "#0ea5e9"}, ${background.secondaryValue || "#22d3ee"})`, template: "" };
+  if (background.kind === "image" && background.mediaSource) return { css: `url('${escapeSingleQuote(background.mediaSource)}') center / ${config.image.size || "cover"} no-repeat`, template: "" };
+  if (background.kind === "video" && background.mediaSource) {
+    return {
+      css: "#0f172a",
+      template: `    <video class="onedesk-video-background" src="${escapeHtml(background.mediaSource)}" autoplay muted loop playsinline></video>`,
+    };
+  }
+  return { css: gradientPresets["sky-cyan"], template: "" };
+}
+
 function normalizeTextLayers(parsed: Record<string, unknown>, fallback: VisualConfig) {
   const textLayers = parsed?.texts;
   if (Array.isArray(textLayers)) {
     return textLayers.map((item, index) => {
       const layer = item as Partial<VisualTextLayer>;
+      const fallbackPosition = fallbackTextPosition(layer.position ?? "center", index, textLayers.length);
       return {
         id: String(layer.id ?? `text-${index + 1}`),
         content: String(layer.content ?? ""),
         fontSize: Number(layer.fontSize ?? 14),
         color: String(layer.color ?? "#ffffff"),
         position: String(layer.position ?? "center"),
+        x: normalizePercent(layer.x, fallbackPosition.x),
+        y: normalizePercent(layer.y, fallbackPosition.y),
       };
     });
   }
 
   const legacyText = parsed?.text as Partial<VisualTextLayer> | undefined;
   if (legacyText) {
+    const fallbackPosition = fallbackTextPosition(legacyText.position ?? "center");
     return [
       {
         id: "text-1",
@@ -224,6 +306,8 @@ function normalizeTextLayers(parsed: Record<string, unknown>, fallback: VisualCo
         fontSize: Number(legacyText.fontSize ?? 14),
         color: String(legacyText.color ?? "#ffffff"),
         position: String(legacyText.position ?? "center"),
+        x: normalizePercent(legacyText.x, fallbackPosition.x),
+        y: normalizePercent(legacyText.y, fallbackPosition.y),
       },
     ];
   }
@@ -231,10 +315,19 @@ function normalizeTextLayers(parsed: Record<string, unknown>, fallback: VisualCo
   return fallback.texts;
 }
 
+function fallbackTextPosition(position: string, index = 0, total = 1) {
+  const offset = total > 1 ? (index - (total - 1) / 2) * 8 : 0;
+  if (position === "left") return { x: 12, y: clampPercent(50 + offset) };
+  if (position === "right") return { x: 88, y: clampPercent(50 + offset) };
+  if (position === "top") return { x: clampPercent(50 + offset), y: 12 };
+  if (position === "bottom") return { x: clampPercent(50 + offset), y: 88 };
+  return { x: 50, y: clampPercent(50 + offset) };
+}
+
 function calculateSquareCellSize(metrics: PageGridMetrics, rows: number, columns: number, rowGap: number, columnGap: number, padding: number) {
   if (metrics.width <= 0 || metrics.height <= 0) return 0;
 
-  // 页面编辑器的格子必须保持 1:1。这里按宽高两个方向分别计算最大可用边长，再取较小值。
+  // 页面编辑器的格子必须保持 1:1。这里按宽高分别计算最大可用边长，再取较小值。
   const availableWidth = metrics.width - padding * 2 - columnGap * Math.max(0, columns - 1);
   const availableHeight = metrics.height - padding * 2 - rowGap * Math.max(0, rows - 1);
   return Math.max(0, Math.floor(Math.min(availableWidth / columns, availableHeight / rows)));
@@ -242,4 +335,25 @@ function calculateSquareCellSize(metrics: PageGridMetrics, rows: number, columns
 
 function clampGridCount(value: number) {
   return Math.max(1, Math.min(12, Number.isFinite(value) ? Math.floor(value) : 1));
+}
+
+function normalizePercent(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? clampPercent(parsed) : fallback;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, value));
+}
+
+function escapeSingleQuote(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
