@@ -68,6 +68,7 @@ const draggingSchemePageIndex = ref<number | null>(null);
 const permissionSourceKind = ref<"component" | "plugin">("component");
 const permissionSourceId = ref("");
 const visualConfig = ref<VisualConfig>(defaultVisualConfig());
+const loadingComponentId = ref("");
 let toastSequence = 0;
 let componentLoadSequence = 0;
 
@@ -591,14 +592,20 @@ function handleWindowPointerMove(event: PointerEvent) {
 }
 
 async function chooseComponent(component: ComponentDefinition) {
+  if (loadingComponentId.value === component.id) return;
   const loadSequence = ++componentLoadSequence;
+  loadingComponentId.value = component.id;
   workspace.selectedComponentId = component.id;
   componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
   componentVisualSection.value = "base";
-  await loadComponentFiles(component, loadSequence);
-  if (loadSequence !== componentLoadSequence || workspace.selectedComponentId !== component.id) return;
-  componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
-  componentRoute.value = "editor";
+  try {
+    await loadComponentFiles(component, loadSequence);
+    if (loadSequence !== componentLoadSequence || workspace.selectedComponentId !== component.id) return;
+    componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
+    componentRoute.value = "editor";
+  } finally {
+    if (loadingComponentId.value === component.id) loadingComponentId.value = "";
+  }
 }
 
 function choosePage(page: PageDefinition) {

@@ -5,6 +5,7 @@ namespace OneDesk.Desktop.Storage;
 
 public sealed class OneDeskRepository
 {
+    private const long MaxEditableComponentFileBytes = 1024 * 1024;
     private readonly OneDeskDataPaths _paths;
     private readonly JsonFileStore _store;
 
@@ -44,6 +45,11 @@ public sealed class OneDeskRepository
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
             var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (!IsReadableComponentSourceFile(relative, file))
+            {
+                continue;
+            }
+
             files[relative] = await File.ReadAllTextAsync(file, cancellationToken);
         }
 
@@ -223,6 +229,39 @@ public sealed class OneDeskRepository
     private string ComponentRoot(string componentId)
     {
         return Path.GetFullPath(Path.Combine(_paths.Components, SafeFileName(componentId, "component id")));
+    }
+
+    private static bool IsReadableComponentSourceFile(string relativePath, string absolutePath)
+    {
+        if (relativePath.StartsWith("assets/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var info = new FileInfo(absolutePath);
+        if (info.Length > MaxEditableComponentFileBytes)
+        {
+            return false;
+        }
+
+        var fileName = Path.GetFileName(relativePath);
+        if (fileName.Equals("onedesk.component.json", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("onedesk.visual.json", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var extension = Path.GetExtension(relativePath);
+        return extension.Equals(".vue", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".json", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".ts", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".tsx", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".js", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jsx", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".css", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".scss", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".html", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".md", StringComparison.OrdinalIgnoreCase);
     }
 
     private string PageRoot(string pageId)
