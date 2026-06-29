@@ -1649,11 +1649,11 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             <div v-if="activeView === 'plugin'" class="plugin-layout">
               <div class="soft-card scrollable grid content-start gap-3 overflow-auto p-4" data-no-window-drag>
                 <button v-for="plugin in workspace.plugins" :key="plugin.id" class="rounded-2xl bg-white px-4 py-3 text-left text-[13px] shadow-sm dark:bg-slate-900" :class="selectedPlugin?.id === plugin.id ? 'ring-2 ring-sky-400' : ''" @click="selectedPluginId = plugin.id">
-                  <div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="truncate font-semibold">{{ plugin.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ plugin.id }} ? {{ plugin.version }}</p></div><span class="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-600 dark:bg-sky-950">???</span></div>
-                  <p class="mt-2 text-[12px] text-slate-500">{{ plugin.persistent ? '??????' : '????' }} ? {{ plugin.permissions.length }} ??</p>
-                  <span class="mt-3 inline-flex rounded-full bg-rose-50 px-3 py-1.5 text-[12px] font-medium text-rose-500 dark:bg-rose-950/40" @click.stop="requestDelete('plugin', plugin.id, plugin.name)">????</span>
+                  <div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="truncate font-semibold">{{ plugin.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ plugin.id }} · {{ plugin.version }}</p></div><span class="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-600 dark:bg-sky-950">已注册</span></div>
+                  <p class="mt-2 text-[12px] text-slate-500">{{ plugin.persistent ? '允许常驻后台' : '按需调用' }} · {{ plugin.permissions.length }} 权限</p>
+                  <span class="mt-3 inline-flex rounded-full bg-rose-50 px-3 py-1.5 text-[12px] font-medium text-rose-500 dark:bg-rose-950/40" @click.stop="requestDelete('plugin', plugin.id, plugin.name)">删除插件</span>
                 </button>
-                <div v-if="!workspace.plugins.length" class="rounded-2xl bg-white px-4 py-8 text-center text-[13px] text-slate-500 shadow-sm dark:bg-slate-900">????????????OneDesk ????????????????????</div>
+                <div v-if="!workspace.plugins.length" class="rounded-2xl bg-white px-4 py-8 text-center text-[13px] text-slate-500 shadow-sm dark:bg-slate-900">暂无插件。导入插件包后，OneDesk 会读取插件清单、显示权限并注册后端进程。</div>
               </div>
               <div class="soft-card p-4">
                 <template v-if="selectedPlugin">
@@ -1666,29 +1666,29 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                         {{ field.title }}
                         <input v-if="field.type === 'string'" v-model="pluginDraft(selectedPlugin)[field.key]" class="field" />
                         <input v-else-if="field.type === 'number' || field.type === 'integer'" v-model.number="pluginDraft(selectedPlugin)[field.key]" type="number" class="field" />
-                        <label v-else-if="field.type === 'boolean'" class="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-950"><input v-model="pluginDraft(selectedPlugin)[field.key]" type="checkbox" class="accent-sky-500" />??</label>
+                        <label v-else-if="field.type === 'boolean'" class="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-950"><input v-model="pluginDraft(selectedPlugin)[field.key]" type="checkbox" class="accent-sky-500" />启用</label>
                         <input v-else v-model="pluginDraft(selectedPlugin)[field.key]" class="field" />
                         <span v-if="field.description" class="text-[11px] font-normal text-slate-500">{{ field.description }}</span>
                       </label>
                     </div>
-                    <p v-else class="rounded-2xl bg-slate-50 px-3 py-3 text-[12px] text-slate-500 dark:bg-slate-950">????????? schema?</p>
+                    <p v-else class="rounded-2xl bg-slate-50 px-3 py-3 text-[12px] text-slate-500 dark:bg-slate-950">该插件没有提交设置 schema。</p>
                   </div>
                   <div class="mt-4 grid gap-2">
-                    <h4 class="text-[13px] font-semibold">??</h4>
-                    <div v-for="permission in selectedPlugin.permissions" :key="permission.capability" class="rounded-2xl bg-slate-50 px-3 py-2 text-[12px] dark:bg-slate-950"><span class="font-semibold">{{ permission.capability }}</span><span v-if="permission.highRisk" class="ml-2 text-rose-500">??</span><p class="mt-1 text-slate-500">{{ permission.description }}</p></div>
+                    <h4 class="text-[13px] font-semibold">权限</h4>
+                    <div v-for="permission in selectedPlugin.permissions" :key="permission.capability" class="rounded-2xl bg-slate-50 px-3 py-2 text-[12px] dark:bg-slate-950"><span class="font-semibold">{{ permission.capability }}</span><span v-if="permission.highRisk" class="ml-2 text-rose-500">高危</span><p class="mt-1 text-slate-500">{{ permission.description }}</p></div>
                   </div>
                 </template>
-                <p v-else class="text-[13px] text-slate-500">???????????????</p>
+                <p v-else class="text-[13px] text-slate-500">选择一个插件后查看设置和权限。</p>
               </div>
             </div>
             <div v-else class="settings-layout">
               <aside class="soft-card flex flex-col gap-1 p-2 text-[13px]">
                 <button class="menu-row" :class="settingsSection === 'general' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'general'"><Icon icon="solar:tuning-2-bold-duotone" class="size-5" />通用</button>
                 <button class="menu-row" :class="settingsSection === 'connection' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'connection'"><Icon icon="solar:link-bold-duotone" class="size-5" />连接</button>
-                <button class="menu-row" :class="settingsSection === 'permission' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'permission'"><Icon icon="solar:shield-keyhole-bold-duotone" class="size-5" />????</button>
-                <button class="menu-row" :class="settingsSection === 'resources' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'resources'"><Icon icon="solar:gallery-wide-bold-duotone" class="size-5" />?????</button>
-                <button class="menu-row" :class="settingsSection === 'plugins' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'plugins'"><Icon icon="solar:plug-circle-bold-duotone" class="size-5" />??</button>
-                <button class="menu-row" :class="settingsSection === 'logs' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'logs'"><Icon icon="solar:document-text-bold-duotone" class="size-5" />??</button>
+                <button class="menu-row" :class="settingsSection === 'permission' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'permission'"><Icon icon="solar:shield-keyhole-bold-duotone" class="size-5" />权限管理</button>
+                <button class="menu-row" :class="settingsSection === 'resources' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'resources'"><Icon icon="solar:gallery-wide-bold-duotone" class="size-5" />资源管理器</button>
+                <button class="menu-row" :class="settingsSection === 'plugins' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'plugins'"><Icon icon="solar:plug-circle-bold-duotone" class="size-5" />插件</button>
+                <button class="menu-row" :class="settingsSection === 'logs' ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/40' : ''" @click="settingsSection = 'logs'"><Icon icon="solar:document-text-bold-duotone" class="size-5" />日志</button>
               </aside>
               <section class="soft-card scrollable overflow-auto p-4" data-no-window-drag>
                 <div v-if="settingsSection === 'general'" class="grid max-w-[560px] gap-3 text-[13px]">
@@ -1733,7 +1733,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                   <div class="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">
                     <div>
                       <p class="font-semibold">媒体资源</p>
-                      <p class="mt-1 text-[12px] text-slate-500">?????????????????????????????</p>
+                      <p class="mt-1 text-[12px] text-slate-500">图片和视频先进入资源管理器，再复制到组件或页面目录中使用。</p>
                     </div>
                     <button class="header-primary-button" @click="addMediaResource">添加资源</button>
                   </div>
@@ -1748,13 +1748,13 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                         <p class="mt-1 truncate text-[11px] text-slate-500">{{ resource.kind }} · {{ resource.id }}</p>
                         <p class="mt-1 text-[11px] text-slate-500">{{ Math.max(1, Math.round(resource.sizeBytes / 1024)) }} KB</p>
                       </div>
-                       <button class="card-action danger w-[72px]" @click="deleteMediaResource(resource)">??</button>
+                       <button class="card-action danger w-[72px]" @click="deleteMediaResource(resource)">删除</button>
                     </article>
-                    <div v-if="!workspace.resources.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-950">???????????????????</div>
+                    <div v-if="!workspace.resources.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-950">暂无资源。点击添加资源导入图片或视频。</div>
                   </div>
                 </div>
-                <div v-else-if="settingsSection === 'plugins'" class="grid gap-3 text-[13px]"><p class="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">??????{{ workspace.plugins.length }} ?????????????????????</p><button class="w-fit rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="activeView = 'plugin'">????</button></div>
-                <div v-else class="grid gap-2 text-[13px]"><div v-for="(log, index) in workspace.logs.slice(0, 20)" :key="index" class="rounded-2xl bg-slate-50 px-4 py-3 text-[12px] dark:bg-slate-950">{{ JSON.stringify(log) }}</div><p v-if="!workspace.logs.length" class="rounded-2xl bg-slate-50 px-4 py-3 text-slate-500 dark:bg-slate-950">?????</p></div>
+                <div v-else-if="settingsSection === 'plugins'" class="grid gap-3 text-[13px]"><p class="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">已安装插件：{{ workspace.plugins.length }} 个。插件导入、设置和权限仍在插件页面管理。</p><button class="w-fit rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="activeView = 'plugin'">前往插件</button></div>
+                <div v-else class="grid gap-2 text-[13px]"><div v-for="(log, index) in workspace.logs.slice(0, 20)" :key="index" class="rounded-2xl bg-slate-50 px-4 py-3 text-[12px] dark:bg-slate-950">{{ JSON.stringify(log) }}</div><p v-if="!workspace.logs.length" class="rounded-2xl bg-slate-50 px-4 py-3 text-slate-500 dark:bg-slate-950">暂无日志。</p></div>
               </section>
             </div>
           </section>
@@ -1769,7 +1769,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
         <div class="flex items-center justify-between gap-3">
           <div>
             <h3 class="text-[16px] font-semibold">{{ resourcePickerTitle }}</h3>
-            <p class="mt-1 text-[12px] text-slate-500">?????{{ resourcePickerKind === 'video' ? '??' : '??' }}????????????{{ resourcePickerTarget === 'component-background' ? '??' : '??' }}???</p>
+            <p class="mt-1 text-[12px] text-slate-500">当前只显示{{ resourcePickerKind === 'video' ? '视频' : '图片' }}资源；选择后会复制到当前{{ resourcePickerTarget === 'component-background' ? '组件' : '页面' }}目录。</p>
           </div>
           <button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showResourcePicker = false"><Icon icon="solar:close-circle-bold-duotone" class="size-5" /></button>
         </div>
@@ -1789,7 +1789,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             </div>
             <span class="rounded-full bg-sky-50 px-3 py-1.5 text-[12px] font-medium text-sky-600 dark:bg-sky-950/50">选择</span>
           </button>
-          <div v-if="!resourcePickerItems.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-900">???????????{{ resourcePickerKind === 'video' ? '??' : '??' }}???</div>
+          <div v-if="!resourcePickerItems.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-900">暂无可用资源，请先添加{{ resourcePickerKind === 'video' ? '视频' : '图片' }}资源。</div>
         </div>
       </div>
     </div>
@@ -1894,16 +1894,16 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
       </div>
     </div>
     <div v-if="showCodeSwitchDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
-      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><Icon icon="solar:danger-triangle-bold-duotone" class="size-9 text-amber-500" /><h3 class="mt-3 text-[16px] font-semibold">????????</h3><p class="mt-2 text-[13px] leading-6 text-slate-500">????????????????? Vue ???????????????</p><div class="mt-4 flex gap-2"><button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="showCodeSwitchDialog = false">??</button><button class="flex-1 rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="componentCodeDraft = generatedComponentCode(selectedComponent); componentEditorMode = 'code'; showCodeSwitchDialog = false">??</button></div></div>
+      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950"><Icon icon="solar:danger-triangle-bold-duotone" class="size-9 text-amber-500" /><h3 class="mt-3 text-[16px] font-semibold">切换到代码编辑？</h3><p class="mt-2 text-[13px] leading-6 text-slate-500">切换后无法回到可视化编辑，因为任意 Vue 代码无法完整还原为可视化配置。</p><div class="mt-4 flex gap-2"><button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="showCodeSwitchDialog = false">取消</button><button class="flex-1 rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="componentCodeDraft = generatedComponentCode(selectedComponent); componentEditorMode = 'code'; showCodeSwitchDialog = false">继续</button></div></div>
     </div>
 
     <div v-if="pendingDelete" class="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
       <div class="modal-panel w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950">
         <Icon icon="solar:trash-bin-trash-bold-duotone" class="size-9 text-rose-500" />
         <h3 class="mt-3 text-[16px] font-semibold">纭鍒犻櫎</h3>
-        <p class="mt-2 text-[13px] leading-6 text-slate-500">?????{{ pendingDelete.name }}?????????????????????</p>
+        <p class="mt-2 text-[13px] leading-6 text-slate-500">即将删除「{{ pendingDelete.name }}」。删除后相关引用可能失效，请确认后继续。</p>
         <div class="mt-4 flex gap-2">
-          <button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="pendingDelete = null">??</button>
+          <button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="pendingDelete = null">取消</button>
           <button class="flex-1 rounded-2xl bg-rose-500 py-2.5 text-[13px] font-medium text-white" @click="performDelete">纭鍒犻櫎</button>
         </div>
       </div>
