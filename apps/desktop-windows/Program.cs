@@ -45,7 +45,7 @@ internal static class Program
             }
             catch
             {
-                // Mutex may already be abandoned; ignore.
+                // 互斥锁可能已被系统标记为废弃；这里忽略释放失败，避免影响退出流程。
             }
             _singleInstanceMutex.Dispose();
         }

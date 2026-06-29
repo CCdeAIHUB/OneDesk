@@ -19,11 +19,11 @@ using OneDesk.Desktop.Storage;
 
 namespace OneDesk.Windows;
 
-public sealed class MainForm : Form
+public sealed partial class MainForm : Form
 {
-    private static readonly Size InitialWindowSize = new(1200, 780);
+    private static readonly Size BaseInitialWindowSize = new(1200, 780);
     private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
-    private const int ResizeGripSize = 14;
+    private const int BaseResizeGripSize = 14;
     private const int CornerRadius = 0;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
@@ -82,8 +82,14 @@ public sealed class MainForm : Form
         AppDiagnostics.Write("MainForm constructor entered.");
         Text = "OneDesk";
         StartPosition = FormStartPosition.CenterScreen;
-        Size = InitialWindowSize;
-        MinimumSize = new Size(1120, 720);
+        // 按当前 DPI 缩放初始窗口和最小窗口尺寸，避免高分屏下前端内容被压缩溢出。
+        var dpiScale = DeviceDpi / 96d;
+        Size = new Size(
+            (int)Math.Round(BaseInitialWindowSize.Width * dpiScale),
+            (int)Math.Round(BaseInitialWindowSize.Height * dpiScale));
+        MinimumSize = new Size(
+            (int)Math.Round(1120 * dpiScale),
+            (int)Math.Round(720 * dpiScale));
         BackColor = TransparentShellColor;
         TransparencyKey = TransparentShellColor;
         FormBorderStyle = FormBorderStyle.None;
@@ -127,9 +133,10 @@ public sealed class MainForm : Form
 
     private void EnsureInitialWindowBounds()
     {
+        // 构造函数里已经完成 DPI 缩放，这里直接使用当前 Size 和 MinimumSize。
         var workingArea = Screen.FromControl(this).WorkingArea;
-        var width = Math.Min(InitialWindowSize.Width, workingArea.Width - 48);
-        var height = Math.Min(InitialWindowSize.Height, workingArea.Height - 48);
+        var width = Math.Min(Size.Width, workingArea.Width - 48);
+        var height = Math.Min(Size.Height, workingArea.Height - 48);
         width = Math.Max(width, MinimumSize.Width);
         height = Math.Max(height, MinimumSize.Height);
         var left = workingArea.Left + (workingArea.Width - width) / 2;
@@ -143,6 +150,17 @@ public sealed class MainForm : Form
         base.OnSizeChanged(e);
         LayoutBrowser();
         Invalidate();
+    }
+
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        var newScale = e.DeviceDpiNew / 96d;
+        // 显示器 DPI 变化时同步更新最小尺寸，保证窗口缩放边界和前端布局一致。
+        MinimumSize = new Size(
+            (int)Math.Round(1120 * newScale),
+            (int)Math.Round(720 * newScale));
+        AppDiagnostics.Write($"DPI changed: OldDpi={e.DeviceDpiOld}, NewDpi={e.DeviceDpiNew}, NewMinimumSize={MinimumSize}");
     }
 
     private void LayoutBrowser()
@@ -216,12 +234,15 @@ public sealed class MainForm : Form
         base.WndProc(ref m);
     }
 
+    private int DpiScaledResizeGrip => (int)Math.Round(BaseResizeGripSize * (DeviceDpi / 96d));
+
     private nint HitTestResizeBorder(Point point)
     {
-        var left = point.X <= ResizeGripSize;
-        var right = point.X >= ClientSize.Width - ResizeGripSize;
-        var top = point.Y <= ResizeGripSize;
-        var bottom = point.Y >= ClientSize.Height - ResizeGripSize;
+        var gripSize = DpiScaledResizeGrip;
+        var left = point.X <= gripSize;
+        var right = point.X >= ClientSize.Width - gripSize;
+        var top = point.Y <= gripSize;
+        var bottom = point.Y >= ClientSize.Height - gripSize;
 
         return (top, bottom, left, right) switch
         {
@@ -340,9 +361,10 @@ public sealed class MainForm : Form
 
             await _browser.EnsureCoreWebView2Async();
             AppDiagnostics.Write("WebView2 initialized.");
-            var zoomFactor = Math.Clamp(96d / DeviceDpi, 0.5d, 1d);
-            _browser.ZoomFactor = zoomFactor;
-            AppDiagnostics.Write($"WebView2 zoom factor applied: {zoomFactor:0.###}; DeviceDpi={DeviceDpi}.");
+            // WebView2 自己处理 DPI 感知渲染。ZoomFactor=1 表示浏览器视口按 Per-Monitor V2 的逻辑像素工作，
+            // 避免壳子和前端同时缩放导致布局被二次放大或压缩。
+            _browser.ZoomFactor = 1d;
+            AppDiagnostics.Write($"WebView2 zoom factor set to 1 (DPI-aware mode); DeviceDpi={DeviceDpi}.");
             _browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _browser.CoreWebView2.Settings.AreDevToolsEnabled = true;
             _browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
@@ -803,116 +825,6 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             return new BridgeResponse(message.RequestId, false, null, "ComponentFileSaveFailed", ex.Message);
-        }
-    }
-
-    private async Task<BridgeResponse> HandleResourceListAsync(BridgeMessage message)
-    {
-        if (_repository is null)
-        {
-            return ShellNotReady(message);
-        }
-
-        return new BridgeResponse(message.RequestId, true, await _repository.ListMediaResourcesAsync());
-    }
-
-    private async Task<BridgeResponse> HandleResourceAddAsync(BridgeMessage message)
-    {
-        if (_repository is null)
-        {
-            return ShellNotReady(message);
-        }
-
-        using var dialog = new OpenFileDialog
-        {
-            Title = "添加媒体资源",
-            Filter = "媒体文件 (*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.webm;*.mov;*.mkv;*.avi)|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.webm;*.mov;*.mkv;*.avi|All Files (*.*)|*.*",
-            CheckFileExists = true,
-            Multiselect = false
-        };
-
-        if (dialog.ShowDialog(this) != DialogResult.OK)
-        {
-            return new BridgeResponse(message.RequestId, false, null, "UserCancelled", "已取消添加资源");
-        }
-
-        try
-        {
-            return new BridgeResponse(message.RequestId, true, await _repository.AddMediaResourceAsync(dialog.FileName));
-        }
-        catch (Exception ex)
-        {
-            return new BridgeResponse(message.RequestId, false, null, "ResourceAddFailed", ex.Message);
-        }
-    }
-
-    private BridgeResponse HandleResourceDelete(BridgeMessage message)
-    {
-        var id = ReadPayloadString(message, "id");
-        if (_repository is null)
-        {
-            return ShellNotReady(message);
-        }
-
-        if (string.IsNullOrWhiteSpace(id))
-        {
-            return InvalidPayload(message);
-        }
-
-        try
-        {
-            _repository.DeleteMediaResource(id);
-            return new BridgeResponse(message.RequestId, true, null);
-        }
-        catch (Exception ex)
-        {
-            return new BridgeResponse(message.RequestId, false, null, "ResourceDeleteFailed", ex.Message);
-        }
-    }
-
-    private async Task<BridgeResponse> HandleResourceCopyToComponentAsync(BridgeMessage message)
-    {
-        var payload = DeserializePayload<ResourceCopyPayload>(message);
-        if (_repository is null)
-        {
-            return ShellNotReady(message);
-        }
-
-        if (payload is null || string.IsNullOrWhiteSpace(payload.ResourceId) || string.IsNullOrWhiteSpace(payload.TargetId))
-        {
-            return InvalidPayload(message);
-        }
-
-        try
-        {
-            return new BridgeResponse(message.RequestId, true, await _repository.CopyMediaResourceToComponentAsync(payload.ResourceId, payload.TargetId));
-        }
-        catch (Exception ex)
-        {
-            return new BridgeResponse(message.RequestId, false, null, "ResourceCopyFailed", ex.Message);
-        }
-    }
-
-    private async Task<BridgeResponse> HandleResourceCopyToPageAsync(BridgeMessage message)
-    {
-        var payload = DeserializePayload<ResourceCopyPayload>(message);
-        if (_repository is null)
-        {
-            return ShellNotReady(message);
-        }
-
-        if (payload is null || string.IsNullOrWhiteSpace(payload.ResourceId) || string.IsNullOrWhiteSpace(payload.TargetId))
-        {
-            return InvalidPayload(message);
-        }
-
-        try
-        {
-            return new BridgeResponse(message.RequestId, true, await _repository.CopyMediaResourceToPageAsync(payload.ResourceId, payload.TargetId));
-        }
-        catch (Exception ex)
-        {
-            return new BridgeResponse(message.RequestId, false, null, "ResourceCopyFailed", ex.Message);
         }
     }
 
@@ -1849,7 +1761,7 @@ public sealed class MainForm : Form
         }
         catch
         {
-            // DWM dark-mode support varies by Windows build; WebView remains usable without it.
+            // 不同 Windows 构建的 DWM 深色模式支持不一致；设置失败不影响 WebView 主流程。
         }
 
         ApplyBlurBehind();

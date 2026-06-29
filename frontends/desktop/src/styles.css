@@ -4,11 +4,15 @@
 
 :root {
   --onedesk-window-radius: 0px;
+  /* 高 DPI 适配：桌面壳子使用 Per-Monitor DPI Aware V2，WebView2 的 ZoomFactor 固定为 1。
+     因此前端按 devicePixelRatio 轻微调整根字号，避免高分屏下文本显得过小。 */
+  --onedesk-rem-base: 16;
   color-scheme: light;
   font-family:
     "Microsoft YaHei UI", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans CJK SC",
     ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: transparent;
+  font-size: calc(var(--onedesk-rem-base, 16) * 1px);
 }
 
 :root.dark {
@@ -19,8 +23,8 @@ body {
   margin: 0;
   width: 100vw;
   height: 100vh;
-  min-width: 1120px;
-  min-height: 720px;
+  min-width: 920px;
+  min-height: 600px;
   overflow: hidden;
   background: transparent;
 }
@@ -71,7 +75,9 @@ body:has(.window-maximized) #app,
 }
 
 .side-nav > button {
-  flex: 0 0 40px;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
 }
 
 * {
@@ -263,9 +269,10 @@ header p {
 
 .soft-row {
   display: flex;
-  height: 46px;
+  min-height: 42px;
+  max-height: 52px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   border-radius: 16px;
   background: rgb(241 245 249);
   padding: 0 12px;
@@ -283,7 +290,7 @@ header p {
   gap: 12px;
   border-radius: 18px;
   background: rgb(241 245 249);
-  padding: 16px;
+  padding: 14px;
   text-align: left;
   box-shadow: 0 10px 24px rgb(15 23 42 / 0.04);
 }
@@ -300,6 +307,11 @@ header p {
   padding: 8px 10px;
   color: rgb(15 23 42);
   outline: none;
+  transition: all 300ms ease;
+}
+
+.field:hover {
+  border-color: rgb(14 165 233 / 0.35);
 }
 
 .field:focus {
@@ -402,6 +414,7 @@ select.field {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
+  transition: all 300ms ease;
 }
 
 .editor-back-button,
@@ -440,10 +453,13 @@ select.field {
 }
 
 .header-device-button {
-  max-width: 220px;
-  gap: 8px;
-  padding: 0 14px;
+  max-width: 180px;
+  gap: 5px;
+  padding: 0 10px;
   color: rgb(71 85 105);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dark .editor-back-button,
@@ -523,9 +539,9 @@ select.field {
 
 .theme-dot {
   display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
   place-items: center;
   border-radius: 999px;
   color: rgb(100 116 139);
@@ -538,17 +554,19 @@ select.field {
 }
 
 .window-controls {
-  height: 32px;
-  gap: 6px;
+  height: 30px;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .window-control {
   display: grid;
-  width: 34px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 12px;
+  border-radius: 10px;
   color: inherit;
+  flex-shrink: 0;
   transition:
     background-color 160ms ease,
     color 160ms ease;
@@ -608,6 +626,67 @@ select.field {
   box-shadow: none;
 }
 
+/* 可视化 / 代码切换：胶囊式分段控件 */
+.editor-toggle-group {
+  display: inline-flex;
+  gap: 2px;
+  border-radius: 999px;
+  background: rgb(241 245 249);
+  padding: 3px;
+}
+
+.dark .editor-toggle-group {
+  background: rgb(30 41 59);
+}
+
+.editor-toggle-group button {
+  height: 28px;
+  border-radius: 999px;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(100 116 139);
+  transition: all 160ms ease;
+}
+
+.editor-toggle-group button:hover {
+  color: rgb(15 23 42);
+}
+
+.dark .editor-toggle-group button:hover {
+  color: rgb(226 232 240);
+}
+
+.editor-toggle-active {
+  background: rgb(14 165 233);
+  color: white !important;
+}
+
+/* 颜色输入框：与普通字段保持一致高度 */
+.editor-color-input {
+  height: 36px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+/* 表单行内按钮：和输入框底部对齐 */
+.editor-field-align {
+  height: 36px;
+  align-self: end;
+  margin-bottom: 0;
+}
+
+/* 文字层卡片 */
+.editor-text-card {
+  border-radius: 14px;
+  background: rgb(248 250 252);
+  padding: 10px 12px;
+}
+
+.dark .editor-text-card {
+  background: rgb(30 41 59);
+}
+
 .editor-section-head {
   display: grid;
   gap: 4px;
@@ -633,10 +712,167 @@ select.field {
   align-items: start;
 }
 
+/* 分区标题内的小按钮：固定高度以适配高 DPI */
+.editor-inline-button {
+  display: inline-flex;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 0 12px;
+  border: 1px solid rgb(14 165 233 / 0.4);
+  background: rgb(14 165 233 / 0.08);
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(2 132 199);
+  transition: all 160ms ease;
+}
+
+.editor-inline-button:hover {
+  background: rgb(14 165 233 / 0.16);
+  border-color: rgb(14 165 233 / 0.6);
+}
+
+.editor-inline-primary {
+  border: none;
+  background: rgb(14 165 233);
+  color: white;
+}
+
+.editor-inline-primary:hover {
+  background: rgb(2 132 199);
+}
+
+.dark .editor-inline-button {
+  border-color: rgb(14 165 233 / 0.4);
+  background: rgb(14 165 233 / 0.12);
+  color: rgb(125 211 252);
+}
+
+.dark .editor-inline-button:hover {
+  background: rgb(14 165 233 / 0.2);
+}
+
+.dark .editor-inline-primary {
+  border: none;
+  background: rgb(14 165 233);
+  color: white;
+}
+
+.dark .editor-inline-primary:hover {
+  background: rgb(2 132 199);
+}
+
 .editor-section-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+/* 横向表单行：宽度不足时自动换行 */
+.editor-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.editor-field-grow {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.editor-field-auto {
+  flex: 0 1 120px;
+  min-width: 0;
+}
+
+.editor-field-num {
+  flex: 0 0 80px;
+  min-width: 0;
+}
+
+/* 动作行：触发选择、名称输入和删除按钮 */
+.editor-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  background: rgb(248 250 252);
+  padding: 6px 8px;
+}
+
+.dark .editor-action-row {
+  background: rgb(30 41 59);
+}
+
+.editor-icon-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+  color: rgb(225 29 72);
+  transition: background-color 160ms ease;
+}
+
+.editor-icon-button:hover {
+  background: rgb(255 228 230);
+}
+
+.dark .editor-icon-button:hover {
+  background: rgb(76 5 25);
+}
+
+.editor-permission-row {
+  border-radius: 12px;
+  background: rgb(248 250 252);
+  padding: 8px 12px;
+}
+
+.dark .editor-permission-row {
+  background: rgb(30 41 59);
+}
+
+.editor-empty-hint {
+  border-radius: 12px;
+  background: rgb(248 250 252);
+  padding: 12px;
+  font-size: 12px;
+  color: rgb(100 116 139);
+}
+
+.dark .editor-empty-hint {
+  background: rgb(30 41 59);
+  color: rgb(148 163 184);
+}
+
+/* 紧凑字段网格：适合颜色、数字等短字段 */
+.editor-section-grid-tight {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.editor-section-card .field {
+  background: rgb(248 250 252);
+  border-color: rgb(226 232 240 / 0.7);
+}
+
+.editor-section-card .field:hover {
+  background: rgb(241 245 249);
+  border-color: rgb(14 165 233 / 0.35);
+}
+
+.dark .editor-section-card .field {
+  background: rgb(15 23 42);
+  border-color: rgb(51 65 85 / 0.6);
+}
+
+.dark .editor-section-card .field:hover {
+  background: rgb(30 41 59);
 }
 
 .scheme-settings > .field,
@@ -672,37 +908,71 @@ select.field {
   color: rgb(2 132 199);
 }
 
+.header-surface-button:hover {
+  background: rgb(241 245 249);
+  border-color: rgb(14 165 233 / 0.4);
+}
+
+.dark .header-surface-button:hover {
+  background: rgb(30 41 59);
+}
+
+.header-primary-button:hover {
+  background: rgb(2 132 199);
+  box-shadow: 0 14px 32px rgb(14 165 233 / 0.4);
+}
+
+.dark .header-primary-button:hover {
+  background: rgb(2 132 199);
+}
+
+.header-device-button:hover {
+  border-color: rgb(14 165 233 / 0.4);
+  color: rgb(2 132 199);
+}
+
+.dark .header-device-button:hover {
+  border-color: rgb(14 165 233 / 0.4);
+  color: rgb(125 211 252);
+}
+
+.editor-back-button:hover {
+  background: rgb(241 245 249);
+}
+
+.dark .editor-back-button:hover {
+  background: rgb(30 41 59);
+}
+
 .page-preview-frame {
   position: relative;
   min-height: 0;
 }
 
 .page-grid-preview {
-  --page-grid-cell-size: min(
-    calc((100% - (var(--page-grid-padding) * 2) - ((var(--page-grid-columns) - 1) * var(--page-grid-column-gap))) / var(--page-grid-columns)),
-    calc((100% - (var(--page-grid-padding) * 2) - ((var(--page-grid-rows) - 1) * var(--page-grid-row-gap))) / var(--page-grid-rows))
-  );
   display: grid;
   width: 100%;
   height: 100%;
-  grid-template-columns: repeat(var(--page-grid-columns), var(--page-grid-cell-size));
-  grid-template-rows: repeat(var(--page-grid-rows), var(--page-grid-cell-size));
   gap: var(--page-grid-row-gap) var(--page-grid-column-gap);
   padding: var(--page-grid-padding);
   overflow: hidden;
+  box-sizing: border-box;
+  justify-content: var(--page-grid-justify, center);
+  align-content: var(--page-grid-align, center);
 }
 
 .page-grid-cell {
-  aspect-ratio: 1 / 1;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .component-live-tile {
-  display: grid;
+  position: relative;
+  display: block;
   width: 100%;
   height: 100%;
-  place-items: center;
   overflow: hidden;
   padding: 4px;
   text-align: center;
@@ -711,16 +981,16 @@ select.field {
 
 .resource-pick-button {
   display: flex;
-  height: 40px;
+  height: 32px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  border-radius: 14px;
+  gap: 6px;
+  border-radius: 10px;
   background: rgb(14 165 233);
   color: white;
   font-size: 12px;
-  font-weight: 700;
-  box-shadow: 0 12px 28px rgb(14 165 233 / 0.22);
+  font-weight: 600;
+  box-shadow: 0 8px 20px rgb(14 165 233 / 0.18);
 }
 
 .resource-grid {

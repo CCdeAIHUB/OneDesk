@@ -71,7 +71,7 @@ public sealed class QuicGatewayService : IDisposable
             }
             catch
             {
-                // Stop should be best-effort; receive loop exits when UDP socket is disposed.
+                // 停止网关采用尽力而为策略；UDP 套接字释放后接收循环会自行退出。
             }
         }
 

@@ -57,7 +57,7 @@ public sealed class DeviceRegistry
             }
             catch (JsonException)
             {
-                // Regenerate a stable identity if the persisted file is corrupt.
+                // 如果持久化身份文件损坏，则重新生成一个稳定身份，避免启动失败。
             }
         }
 

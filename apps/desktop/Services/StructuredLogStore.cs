@@ -88,7 +88,7 @@ public sealed class StructuredLogStore
             }
             catch (JsonException)
             {
-                // Ignore a partial trailing JSONL row left by an interrupted write.
+                // 忽略中断写入留下的半行 JSONL，保证日志读取不影响启动。
             }
         }
     }

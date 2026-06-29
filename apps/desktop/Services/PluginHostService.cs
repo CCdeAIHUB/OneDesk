@@ -234,7 +234,7 @@ public sealed class PluginHostService : IDisposable
             }
             catch
             {
-                // Plugin cleanup should never prevent OneDesk from closing.
+                // 插件清理失败不能阻止 OneDesk 退出。
             }
         }
     }

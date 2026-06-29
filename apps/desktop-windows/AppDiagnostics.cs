@@ -18,7 +18,7 @@ internal static class AppDiagnostics
         }
         catch
         {
-            // Diagnostics must never prevent app startup.
+            // 诊断日志不能阻断应用启动。
         }
     }
 }
