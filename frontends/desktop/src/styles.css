@@ -50,6 +50,12 @@ textarea {
   box-sizing: border-box;
 }
 
+.window-moving,
+.window-moving * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
 .app-shell {
   border-radius: var(--onedesk-window-radius, 0px);
   overflow: hidden;

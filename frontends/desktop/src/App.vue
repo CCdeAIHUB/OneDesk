@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import CodeMirrorEditor from "./components/CodeMirrorEditor.vue";
 import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
-import { closeWindow, maximizeWindow, minimizeWindow, sendShell, setShellTheme, startWindowDrag, startWindowResize } from "./nativeBridge";
+import { closeWindow, maximizeWindow, minimizeWindow, moveWindowBy, sendShell, setShellTheme, startWindowResize } from "./nativeBridge";
 import {
   applyDpiScaling,
   componentPreviewStyle as buildComponentPreviewStyle,
@@ -73,6 +73,12 @@ const componentVideoPreviewState = ref<"idle" | "loading" | "ready" | "error">("
 const componentVideoPreviewKey = ref(0);
 let toastSequence = 0;
 let componentLoadSequence = 0;
+let windowMovePointerId = -1;
+let windowMoveLastScreenX = 0;
+let windowMoveLastScreenY = 0;
+let pendingWindowMoveX = 0;
+let pendingWindowMoveY = 0;
+let pendingWindowMoveFrame = 0;
 
 const triggerCatalog: Array<{ category: string; label: string; triggers: Array<{ id: string; displayName: string; fingerCount?: number }> }> = [
   {
@@ -585,7 +591,55 @@ function handleWindowDrag(event: PointerEvent) {
     const rect = scroller.getBoundingClientRect();
     if (event.clientX >= rect.right - 24 || event.clientY >= rect.bottom - 24) return;
   }
-  void startWindowDrag();
+  beginWindowMove(event);
+}
+
+function beginWindowMove(event: PointerEvent) {
+  windowMovePointerId = event.pointerId;
+  windowMoveLastScreenX = event.screenX;
+  windowMoveLastScreenY = event.screenY;
+  document.documentElement.classList.add("window-moving");
+  window.addEventListener("pointermove", moveWindowWithPointer);
+  window.addEventListener("pointerup", endWindowMove);
+  window.addEventListener("pointercancel", endWindowMove);
+  event.preventDefault();
+}
+
+function moveWindowWithPointer(event: PointerEvent) {
+  if (event.pointerId !== windowMovePointerId) return;
+  const dx = Math.round(event.screenX - windowMoveLastScreenX);
+  const dy = Math.round(event.screenY - windowMoveLastScreenY);
+  windowMoveLastScreenX = event.screenX;
+  windowMoveLastScreenY = event.screenY;
+  if (dx === 0 && dy === 0) return;
+  pendingWindowMoveX += dx;
+  pendingWindowMoveY += dy;
+  if (pendingWindowMoveFrame) return;
+  pendingWindowMoveFrame = window.requestAnimationFrame(flushWindowMove);
+}
+
+function flushWindowMove() {
+  pendingWindowMoveFrame = 0;
+  const dx = pendingWindowMoveX;
+  const dy = pendingWindowMoveY;
+  pendingWindowMoveX = 0;
+  pendingWindowMoveY = 0;
+  if (dx !== 0 || dy !== 0) {
+    void moveWindowBy(dx, dy);
+  }
+}
+
+function endWindowMove(event: PointerEvent) {
+  if (event.pointerId !== windowMovePointerId) return;
+  windowMovePointerId = -1;
+  window.removeEventListener("pointermove", moveWindowWithPointer);
+  window.removeEventListener("pointerup", endWindowMove);
+  window.removeEventListener("pointercancel", endWindowMove);
+  document.documentElement.classList.remove("window-moving");
+  if (pendingWindowMoveFrame) {
+    window.cancelAnimationFrame(pendingWindowMoveFrame);
+    flushWindowMove();
+  }
 }
 
 function resizeEdgeFromPointer(event: PointerEvent) {

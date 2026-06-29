@@ -46,6 +46,8 @@ public sealed partial class MainForm : Form
     private const int WmSetCursor = 0x0020;
     private const int WmNcLButtonDown = 0x00A1;
     private const int WmSysCommand = 0x0112;
+    private const int WmExitSizeMove = 0x0232;
+    private const int WmLButtonDown = 0x0201;
     private const int ScMove = 0xF010;
     private const int WsCaption = 0x00C00000;
     private const int WsThickFrame = 0x00040000;
@@ -150,6 +152,7 @@ public sealed partial class MainForm : Form
         base.OnSizeChanged(e);
         LayoutBrowser();
         Invalidate();
+        ApplyBlurBehind();
     }
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)
@@ -184,9 +187,22 @@ public sealed partial class MainForm : Form
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == WmExitSizeMove)
+        {
+            ApplyBlurBehind();
+        }
+
         if (m.Msg == WmNcPaint || m.Msg == WmNcActivate)
         {
             m.Result = (nint)1;
+            return;
+        }
+
+        // 非客户区鼠标按下（标题栏拖拽）后，DWM 可能清除 Acrylic，延迟重新应用
+        if (m.Msg == WmNcLButtonDown)
+        {
+            base.WndProc(ref m);
+            BeginInvoke(new Action(ApplyBlurBehind));
             return;
         }
 
@@ -630,6 +646,7 @@ public sealed partial class MainForm : Form
                 "window.maximize" => HandleWindowMaximize(message),
                 "window.dragStart" => HandleWindowDragStart(message),
                 "window.resizeStart" => HandleWindowResizeStart(message),
+                "window.moveBy" => HandleWindowMoveBy(message),
                 "window.close" => HandleWindowClose(message),
                 "window.theme" => HandleWindowTheme(message),
                 _ => new BridgeResponse(message.RequestId, false, null, "CapabilityNotSupported", "未知 OneDesk 桥接请求")
@@ -1644,6 +1661,22 @@ public sealed partial class MainForm : Form
         return new BridgeResponse(message.RequestId, true, null);
     }
 
+    private BridgeResponse HandleWindowMoveBy(BridgeMessage message)
+    {
+        if (message.Payload is { } payload &&
+            payload.TryGetProperty("dx", out var dxEl) &&
+            payload.TryGetProperty("dy", out var dyEl) &&
+            dxEl.TryGetInt32(out var dx) &&
+            dyEl.TryGetInt32(out var dy))
+        {
+            var pos = Location;
+            pos.Offset(dx, dy);
+            Location = pos;
+            ApplyBlurBehind();
+        }
+        return new BridgeResponse(message.RequestId, true, null);
+    }
+
     private BridgeResponse HandleWindowResizeStart(BridgeMessage message)
     {
         var edge = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : null;
@@ -1662,10 +1695,8 @@ public sealed partial class MainForm : Form
 
         if (hitTest != HtClient)
         {
-            SuspendBlurForDrag();
             ReleaseCapture();
             SendMessage(Handle, WmNcLButtonDown, hitTest, 0);
-            ResumeBlurAfterDrag();
         }
 
         return new BridgeResponse(message.RequestId, hitTest != HtClient, hitTest != HtClient);
@@ -1706,10 +1737,8 @@ public sealed partial class MainForm : Form
 
     private void BeginNativeWindowDrag()
     {
-        SuspendBlurForDrag();
         ReleaseCapture();
         SendMessage(Handle, WmNcLButtonDown, HtCaption, 0);
-        ResumeBlurAfterDrag();
     }
 
     private void SuspendBlurForDrag()

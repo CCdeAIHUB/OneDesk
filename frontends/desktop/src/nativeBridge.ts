@@ -122,6 +122,10 @@ export async function startWindowResize(edge: string): Promise<void> {
   await window.OneDeskNative?.startWindowResize?.(edge);
 }
 
+export async function moveWindowBy(dx: number, dy: number): Promise<void> {
+  await window.OneDeskNative?.send?.("window.moveBy", JSON.stringify({ dx, dy }));
+}
+
 export async function closeWindow(): Promise<void> {
   await window.OneDeskNative?.closeWindow?.();
 }
