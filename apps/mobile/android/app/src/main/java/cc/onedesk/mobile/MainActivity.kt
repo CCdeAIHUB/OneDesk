@@ -29,6 +29,10 @@ import java.time.Instant
 import java.util.UUID
 
 class MainActivity : Activity() {
+    companion object {
+        private const val CACHE_SCHEMA_VERSION = 2
+    }
+
     private lateinit var webView: WebView
     private val prefs by lazy { getSharedPreferences("onedesk-mobile", Context.MODE_PRIVATE) }
     private val disconnectedLogs = mutableListOf<JSONObject>()
@@ -44,6 +48,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
+        clearOutdatedCache()
         enableImmersiveMode()
 
         webView = WebView(this)
@@ -89,6 +94,21 @@ class MainActivity : Activity() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel("onedesk-events", "OneDesk 事件", NotificationManager.IMPORTANCE_DEFAULT)
         manager.createNotificationChannel(channel)
+    }
+
+    private fun clearOutdatedCache() {
+        val currentVersion = prefs.getInt("cacheSchemaVersion", 0)
+        if (currentVersion >= CACHE_SCHEMA_VERSION) {
+            return
+        }
+
+        val editor = prefs.edit()
+        for (key in prefs.all.keys) {
+            if (key == "knownDesktops" || key.startsWith("scheme:")) {
+                editor.remove(key)
+            }
+        }
+        editor.putInt("cacheSchemaVersion", CACHE_SCHEMA_VERSION).apply()
     }
 
     private fun appendDisconnectedLog(level: String, category: String, message: String) {
