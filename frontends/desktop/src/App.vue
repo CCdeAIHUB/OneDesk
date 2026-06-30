@@ -34,6 +34,7 @@ const componentVisualScrollHost = ref<HTMLElement | null>(null);
 const previewRatio = ref("1:1");
 const showPermissionDialog = ref(false);
 const showCodeSwitchDialog = ref(false);
+const showActionDesignerDialog = ref(false);
 const showDeviceMenu = ref(false);
 const showDeviceDialog = ref(false);
 const exporting = ref(false);
@@ -52,6 +53,8 @@ const grantedImportCapabilities = ref<string[]>([]);
 const selectedDeviceId = ref("");
 const selectedPluginId = ref("");
 const pluginSettingsDraft = ref<Record<string, Record<string, unknown>>>({});
+const actionDraft = ref<ActionDefinition | null>(null);
+const actionDraftParametersText = ref("{}");
 const selectedCellId = ref("");
 const pageLivePreview = ref(false);
 const showResourcePicker = ref(false);
@@ -158,6 +161,9 @@ const permissionSourceOptions = computed(() => [
 const permissionSourceLabel = computed(() => permissionSourceOptions.value.find((option) => option.kind === permissionSourceKind.value && option.id === permissionSourceId.value)?.label ?? "未选择授权对象");
 const selectedGrants = computed(() => workspace.permissionGrants.find((grant) => grant.sourceKey === permissionSourceKey.value)?.capabilities ?? []);
 const trustedDevices = computed(() => workspace.deviceStatus?.trusted ?? []);
+const actionDraftInvocation = computed(() => actionDraft.value?.invocations[0] ?? null);
+const actionDraftTriggerLabel = computed(() => actionDraft.value ? triggerLabel(actionDraft.value.trigger) : "\u672a\u9009\u62e9\u89e6\u53d1");
+const actionDraftCapabilityLabel = computed(() => actionDraftInvocation.value?.capability || "\u672a\u9009\u62e9 JSAPI");
 const currentDevice = computed(() => trustedDevices.value.find((device) => device.deviceId === selectedDeviceId.value) ?? trustedDevices.value[0] ?? null);
 const currentDeviceName = computed(() => currentDevice.value ? (currentDevice.value.remark || currentDevice.value.displayName) : "等待移动设备连接");
 const currentDeviceIcon = computed(() => currentDevice.value ? "solar:smartphone-bold-duotone" : "solar:devices-bold-duotone");
@@ -968,22 +974,69 @@ async function saveComponent() {
   await loadWorkspace({ preserveSelection: true, selectedComponentId: selectedComponent.value.id });
 }
 
-async function addComponentAction() {
+function addComponentAction() {
+  openActionDesigner();
+}
+
+function openActionDesigner(action?: ActionDefinition) {
   if (!selectedComponent.value) return;
-  const used = new Set(selectedComponentActions.value.map((action) => action.trigger.id));
+  const used = new Set(selectedComponentActions.value.filter((item) => item.id !== action?.id).map((item) => item.trigger.id));
   const fallbackTrigger = triggerOptions.value.find((trigger) => !used.has(trigger.id)) ?? triggerOptions.value[0];
-  const action: ActionDefinition = {
+  const draft: ActionDefinition = action ? {
+    id: action.id,
+    name: action.name,
+    trigger: buildTriggerDefinition(action.trigger),
+    invocations: action.invocations.length ? action.invocations.map((item) => ({
+      targetDeviceId: item.targetDeviceId,
+      capability: item.capability,
+      parameters: { ...item.parameters },
+    })) : [defaultActionInvocation()],
+  } : {
     id: `action-${crypto.randomUUID()}`,
-    name: "新动作",
+    name: "\u65b0\u52a8\u4f5c",
     trigger: buildTriggerDefinition(fallbackTrigger),
-    invocations: [{ targetDeviceId: "desktop", capability: "notification.native", parameters: { title: "OneDesk", message: "动作已触发" } }],
+    invocations: [defaultActionInvocation()],
   };
-  const actionResponse = await sendShell<ActionDefinition>("workspace.saveAction", action);
-  if (!actionResponse.ok) {
-    workspace.toast = actionResponse.message ?? "动作保存失败";
+  actionDraft.value = draft;
+  actionDraftParametersText.value = JSON.stringify(draft.invocations[0]?.parameters ?? {}, null, 2);
+  showActionDesignerDialog.value = true;
+}
+
+function defaultActionInvocation() {
+  return {
+    targetDeviceId: "desktop",
+    capability: "notification.native",
+    parameters: { title: "OneDesk", message: "\u52a8\u4f5c\u5df2\u89e6\u53d1" },
+  };
+}
+
+function changeActionDraftTrigger(triggerId: string) {
+  if (!actionDraft.value) return;
+  actionDraft.value.trigger = buildTriggerDefinition(findTrigger(triggerId));
+}
+
+async function saveActionDesigner() {
+  if (!selectedComponent.value || !actionDraft.value || !actionDraftInvocation.value) return;
+  const duplicated = selectedComponentActions.value.some((item) => item.id !== actionDraft.value?.id && item.trigger.id === actionDraft.value?.trigger.id);
+  if (duplicated) {
+    announceToast("\u540c\u4e00\u7ec4\u4ef6\u5185\u89e6\u53d1\u5fc5\u987b\u552f\u4e00");
     return;
   }
-  selectedComponent.value.actionIds = [...selectedComponent.value.actionIds, action.id];
+  try {
+    actionDraftInvocation.value.parameters = JSON.parse(actionDraftParametersText.value || "{}") as Record<string, unknown>;
+  } catch {
+    announceToast("JSAPI \u53c2\u6570\u5fc5\u987b\u662f\u6709\u6548 JSON");
+    return;
+  }
+  const actionResponse = await sendShell<ActionDefinition>("workspace.saveAction", actionDraft.value);
+  if (!actionResponse.ok) {
+    announceToast(actionResponse.message ?? "\u52a8\u4f5c\u4fdd\u5b58\u5931\u8d25");
+    return;
+  }
+  if (!selectedComponent.value.actionIds.includes(actionDraft.value.id)) {
+    selectedComponent.value.actionIds = [...selectedComponent.value.actionIds, actionDraft.value.id];
+  }
+  showActionDesignerDialog.value = false;
   await saveComponent();
 }
 
@@ -1415,7 +1468,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
 
 <template>
   <main class="relative h-screen w-screen overflow-hidden text-slate-950 dark:text-slate-100" :class="{ 'window-maximized': isMaximized }" @pointerdown="handleWindowDrag" @pointermove="handleWindowPointerMove">
-    <section class="app-shell flex h-full min-h-[600px] min-w-[920px]">
+    <section class="app-shell flex h-full min-h-[600px] min-w-[1020px]">
       <aside class="flex w-[96px] shrink-0 items-start justify-center py-9">
         <nav class="side-nav flex w-[54px] flex-col items-center gap-4 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.08)] dark:bg-slate-950">
           <button v-for="item in navItems" :key="item.key" class="grid size-[40px] shrink-0 place-items-center rounded-full transition" :class="activeView === item.key ? 'bg-sky-500 text-white dark:shadow-[0_10px_24px_rgba(14,165,233,0.35)]' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'" :title="item.label" @click="openView(item.key)">
@@ -1500,7 +1553,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </div>
         </header>
 
-        <div class="min-h-0 flex-1 pt-8">
+        <div class="min-h-0 flex-1 pt-2 pb-6">
           <section v-if="activeView === 'home'" class="grid h-full grid-cols-[1.25fr_0.9fr] grid-rows-[240px_1fr] gap-5">
             <div class="soft-card p-5">
               <div class="mb-4 flex items-start justify-between">
@@ -1597,7 +1650,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             </aside>
             <section
               ref="componentVisualScrollHost"
-              class="soft-card scrollable min-h-0 min-w-0 overflow-auto p-5"
+              class="soft-card scrollable min-h-0 min-w-0 overflow-auto p-5 editor-section"
               data-no-window-drag
               @scroll="componentEditorMode === 'visual' ? syncVisualSectionFromScroll() : undefined"
             >
@@ -1664,17 +1717,24 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 </section>
                 <section data-visual-section="action">
                   <div class="editor-section-head editor-section-head-row"><div><h3>动作系统</h3><p>动作仍保持每个触发唯一。</p></div><button class="editor-inline-button" @click="addComponentAction"><Icon icon="solar:add-circle-bold-duotone" class="size-[14px]" />添加动作</button></div>
-                  <div class="grid gap-2">
-                    <div v-for="action in selectedComponentActions" :key="action.id" class="editor-action-row">
-                      <select class="field h-8 flex-1 min-w-0" :value="action.trigger.id" @change="changeActionTrigger(action, ($event.target as HTMLSelectElement).value)">
-                        <optgroup v-for="group in triggerCatalog" :key="group.category" :label="group.label">
-                          <option v-for="trigger in group.triggers" :key="trigger.id" :value="trigger.id">{{ trigger.displayName }}</option>
-                        </optgroup>
-                      </select>
-                      <input v-model="action.name" class="field h-8 flex-1 min-w-0" placeholder="动作名称" @change="sendShell('workspace.saveAction', action)" />
-                      <button class="editor-icon-button" @click="removeComponentAction(action.id)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-[16px]" /></button>
+                  <div class="grid gap-3">
+                    <div v-for="action in selectedComponentActions" :key="action.id" class="action-summary-card">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center justify-between gap-3">
+                          <p class="truncate text-[13px] font-semibold">{{ action.name }}</p>
+                          <span class="rounded-full bg-sky-500/10 px-2.5 py-1 text-[10px] font-semibold text-sky-500">{{ action.invocations.length }} JSAPI</span>
+                        </div>
+                        <div class="mt-3 grid gap-2">
+                          <div class="action-flow-row"><span>1</span><div><p>触发</p><b>{{ triggerLabel(action.trigger) }}</b></div></div>
+                          <div class="action-flow-row"><span>2</span><div><p>动作</p><b>调用 JSAPI · {{ action.invocations[0]?.capability || "未设置" }}</b></div></div>
+                        </div>
+                      </div>
+                      <div class="grid shrink-0 gap-2">
+                        <button class="card-action" @click="openActionDesigner(action)"><Icon icon="solar:pen-bold-duotone" class="size-4" />编辑</button>
+                        <button class="card-action danger" @click="removeComponentAction(action.id)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-4" />删除</button>
+                      </div>
                     </div>
-                    <p v-if="!selectedComponentActions.length" class="editor-empty-hint">暂无动作。添加后会保存动作定义并绑定到当前组件。</p>
+                    <p v-if="!selectedComponentActions.length" class="editor-empty-hint">暂无动作。点击添加动作后，在流程设计器里配置触发与 JSAPI 调用。</p>
                   </div>
                 </section>
                 <section data-visual-section="permission">
@@ -1763,8 +1823,9 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </section>
 
           <section v-else-if="activeView === 'page'" class="h-full">
-            <div class="grid h-[calc(100%-12px)] min-h-0 grid-cols-[320px_1fr] gap-5">
-              <aside class="soft-card scrollable page-settings-panel min-h-0 overflow-auto p-4" data-no-window-drag>
+            <div class="grid h-full min-h-0 grid-cols-[320px_1fr] gap-5">
+              <aside class="soft-card page-settings-panel min-h-0 overflow-hidden" data-no-window-drag>
+                <div class="scrollable h-full overflow-auto p-4" data-no-window-drag>
                 <div class="editor-section-card">
                   <div class="editor-section-head">
                     <h3>格子矩阵</h3>
@@ -1818,6 +1879,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                   </div>
                 </div>
                 <p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p>
+                </div>
               </aside>
               <div class="soft-card flex min-h-0 flex-col p-5">
                 <div class="mb-4 flex w-full items-center justify-between gap-3">
@@ -1881,8 +1943,9 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </section>
 
           <section v-else-if="activeView === 'scheme'" class="h-full">
-            <div class="grid h-[calc(100%-42px)] min-h-0 grid-cols-[300px_1fr] gap-5">
-              <aside class="soft-card scrollable min-h-0 overflow-auto p-4" data-no-window-drag>
+            <div class="grid h-full min-h-0 grid-cols-[300px_1fr] gap-5">
+              <aside class="soft-card scheme-settings-panel min-h-0 overflow-hidden" data-no-window-drag>
+                <div class="scrollable h-full overflow-auto p-4" data-no-window-drag>
                 <select class="field mt-1 text-[12px]" @change="handleAddSchemePage">
                   <option value="">添加页面到方案</option>
                   <option v-for="page in workspace.pages.filter((page) => !selectedScheme?.pageIds.includes(page.id))" :key="page.id" :value="page.id">{{ page.name }}</option>
@@ -1951,6 +2014,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     </select>
                     <button class="card-action danger" @click="removeSchemeEdge(index)">删除边</button>
                   </div>
+                </div>
                 </div>
               </aside>
 
@@ -2204,6 +2268,74 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             </div>
           </section>
         </div>
+      </div>
+    </div>
+    <div v-if="showActionDesignerDialog && actionDraft" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
+      <div class="grid max-h-[min(720px,calc(100vh-64px))] w-full max-w-[880px] grid-cols-[260px_1fr] overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-slate-950" data-no-window-drag>
+        <aside class="border-r border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h3 class="text-[16px] font-semibold">动作流程</h3>
+              <p class="mt-1 text-[12px] text-slate-500">按顺序设计触发与执行内容。</p>
+            </div>
+            <button class="grid size-8 place-items-center rounded-full bg-white text-slate-500 dark:bg-slate-800" @click="showActionDesignerDialog = false">
+              <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
+            </button>
+          </div>
+          <div class="mt-5 grid gap-3">
+            <div class="action-designer-step">
+              <span>1</span>
+              <div>
+                <p>触发</p>
+                <b>{{ actionDraftTriggerLabel }}</b>
+              </div>
+            </div>
+            <div class="action-designer-step">
+              <span>2</span>
+              <div>
+                <p>动作</p>
+                <b>调用 JSAPI · {{ actionDraftCapabilityLabel }}</b>
+              </div>
+            </div>
+          </div>
+        </aside>
+        <section class="scrollable min-h-0 overflow-auto p-5">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <h3 class="text-[16px] font-semibold">动作配置</h3>
+              <p class="mt-1 text-[12px] text-slate-500">同一组件内触发必须唯一，保存后动作会绑定到当前组件。</p>
+            </div>
+            <button class="rounded-full bg-sky-500 px-5 py-2 text-[13px] font-semibold text-white shadow-lg shadow-sky-500/20" @click="saveActionDesigner">保存动作</button>
+          </div>
+          <div class="mt-5 grid gap-5">
+            <section class="editor-section-card">
+              <div class="editor-section-head"><h3>基础信息</h3><p>用于在组件动作列表中识别这条动作。</p></div>
+              <label class="field-label"><span>动作名称</span><input v-model="actionDraft.name" class="field" placeholder="动作名称" /></label>
+            </section>
+            <section class="editor-section-card">
+              <div class="editor-section-head"><h3>触发</h3><p>一个动作只能拥有一个触发。</p></div>
+              <label class="field-label">
+                <span>触发方式</span>
+                <select class="field" :value="actionDraft.trigger.id" @change="changeActionDraftTrigger(($event.target as HTMLSelectElement).value)">
+                  <optgroup v-for="group in triggerCatalog" :key="group.category" :label="group.label">
+                    <option v-for="trigger in group.triggers" :key="trigger.id" :value="trigger.id">{{ trigger.displayName }}</option>
+                  </optgroup>
+                </select>
+              </label>
+            </section>
+            <section v-if="actionDraft.invocations[0]" class="editor-section-card">
+              <div class="editor-section-head"><h3>动作</h3><p>当前执行内容为调用 JSAPI，后续可以继续追加更多执行节点。</p></div>
+              <div class="editor-form-row">
+                <label class="field-label editor-field-grow"><span>目标设备 ID</span><input v-model="actionDraft.invocations[0].targetDeviceId" class="field" placeholder="desktop 或设备 ID" /></label>
+                <label class="field-label editor-field-grow"><span>JSAPI 能力</span><input v-model="actionDraft.invocations[0].capability" class="field" list="action-capability-list" placeholder="notification.native" /></label>
+              </div>
+              <datalist id="action-capability-list">
+                <option v-for="capability in permissionRows" :key="capability.id" :value="capability.id">{{ capability.name }} · {{ capability.description }}</option>
+              </datalist>
+              <label class="field-label mt-3"><span>参数 JSON</span><textarea v-model="actionDraftParametersText" class="field min-h-[132px] resize-none font-mono text-[12px]" spellcheck="false"></textarea></label>
+            </section>
+          </div>
+        </section>
       </div>
     </div>
     <div v-if="showPermissionDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">

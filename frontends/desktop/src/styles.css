@@ -23,7 +23,7 @@ body {
   margin: 0;
   width: 100vw;
   height: 100vh;
-  min-width: 920px;
+  min-width: 1020px;
   min-height: 600px;
   overflow: hidden;
   background: transparent;
@@ -175,10 +175,39 @@ header p {
 }
 
 .scrollable {
-  scrollbar-gutter: stable both-edges;
   overscroll-behavior: contain;
+}
+
+/* 卡片内滚动区域：给滚动条预留右侧空间 */
+.soft-card.scrollable {
+  scrollbar-gutter: stable;
   padding-right: 12px;
-  padding-bottom: 12px;
+}
+
+/* 页面/方案编辑左侧设置面板：内层滚动区域保持默认 padding，内容居中 */
+.page-settings-panel > .scrollable,
+.scheme-settings-panel > .scrollable {
+  padding-right: 16px;
+  padding-left: 16px;
+}
+
+/* 设置面板内层滚动区域的滚动条：缩窄并定制样式 */
+.page-settings-panel > .scrollable::-webkit-scrollbar,
+.scheme-settings-panel > .scrollable::-webkit-scrollbar {
+  width: 14px;
+}
+
+.page-settings-panel > .scrollable::-webkit-scrollbar-track,
+.scheme-settings-panel > .scrollable::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.page-settings-panel > .scrollable::-webkit-scrollbar-thumb,
+.scheme-settings-panel > .scrollable::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background: rgb(14 165 233 / 0.5);
+  background-clip: padding-box;
 }
 
 .manager-card:hover {
@@ -417,11 +446,13 @@ select.field {
 .header-device-button,
 .editor-title-input {
   display: inline-flex;
+  flex-shrink: 0;
   height: 36px;
   align-items: center;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
   transition: all 300ms ease;
 }
 
@@ -815,6 +846,59 @@ select.field {
   background: rgb(30 41 59);
 }
 
+.action-summary-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid rgb(226 232 240 / 0.8);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 0.78);
+  padding: 12px;
+}
+
+.dark .action-summary-card {
+  border-color: rgb(51 65 85 / 0.8);
+  background: rgb(15 23 42 / 0.86);
+}
+
+.action-flow-row,
+.action-designer-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.action-flow-row span,
+.action-designer-step span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgb(14 165 233);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.action-flow-row p,
+.action-designer-step p {
+  margin: 0;
+  color: rgb(100 116 139);
+  font-size: 11px;
+}
+
+.action-flow-row b,
+.action-designer-step b {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
 .editor-icon-button {
   display: grid;
   width: 32px;
@@ -864,22 +948,51 @@ select.field {
   gap: 10px;
 }
 
-.editor-section-card .field {
+.editor-section-card .field,
+.editor-section .field {
   background: rgb(248 250 252);
   border-color: rgb(226 232 240 / 0.7);
 }
 
-.editor-section-card .field:hover {
+.editor-section-card .field:hover,
+.editor-section .field:hover {
   background: rgb(241 245 249);
   border-color: rgb(14 165 233 / 0.35);
 }
 
-.dark .editor-section-card .field {
+/* 统一输入框和行内按钮高度：36px */
+.editor-section .field,
+.editor-section-card .field,
+.editor-section input.field,
+.editor-section-card input.field,
+.editor-section select.field,
+.editor-section-card select.field {
+  height: 36px;
+}
+
+.editor-section .editor-color-input,
+.editor-section-card .editor-color-input {
+  height: 36px;
+  padding: 4px;
+}
+
+/* 行内按钮统一 36px 高度 */
+.editor-section .editor-field-align,
+.editor-section .resource-pick-button,
+.editor-section-card .editor-field-align,
+.editor-section-card .resource-pick-button {
+  height: 36px;
+  align-self: end;
+}
+
+.dark .editor-section-card .field,
+.dark .editor-section .field {
   background: rgb(15 23 42);
   border-color: rgb(51 65 85 / 0.6);
 }
 
-.dark .editor-section-card .field:hover {
+.dark .editor-section-card .field:hover,
+.dark .editor-section .field:hover {
   background: rgb(30 41 59);
 }
 
@@ -1074,10 +1187,6 @@ select.field {
   100% {
     transform: translateX(260%);
   }
-}
-
-.page-settings-panel.scrollable {
-  padding-right: 18px;
 }
 
 .page-settings-panel .editor-section-card {
