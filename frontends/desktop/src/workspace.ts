@@ -143,6 +143,23 @@ export async function loadWorkspace(options?: {
   }
 }
 
+export async function refreshDeviceConnectivity(): Promise<void> {
+  const [deviceResponse, gatewayResponse] = await Promise.all([
+    sendShell<DeviceStatusSnapshot>("device.status"),
+    sendShell<GatewayStatus>("gateway.status"),
+  ]);
+
+  if (deviceResponse.ok && deviceResponse.payload) {
+    workspace.deviceStatus = deviceResponse.payload;
+    workspace.devices = deviceResponse.payload.devices.filter((device) => String(device.kind).toLowerCase() !== "desktop" && !device.deviceId.startsWith("desktop-"));
+    workspace.selectedDevice = workspace.devices[0]?.displayName ?? "未选择移动设备";
+  }
+
+  if (gatewayResponse.ok && gatewayResponse.payload) {
+    workspace.gatewayStatus = gatewayResponse.payload;
+  }
+}
+
 export async function applyScheme(schemeId: string, deviceId?: string): Promise<void> {
   const response = await sendShell<{ schemeId: string; deviceId?: string | null }>("workspace.applyScheme", { id: schemeId, deviceId });
   if (response.ok) {

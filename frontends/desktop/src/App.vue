@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Icon } from "@iconify/vue";
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import QRCode from "qrcode";
 import CodeMirrorEditor from "./components/CodeMirrorEditor.vue";
 import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TriggerDefinition, TrustedPairingCredential, ViewKey } from "./domain";
-import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
+import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, refreshDeviceConnectivity, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, moveWindowBy, sendShell, setShellTheme, startWindowResize } from "./nativeBridge";
 import {
   applyDpiScaling,
@@ -84,6 +84,7 @@ let windowMoveLastScreenY = 0;
 let pendingWindowMoveX = 0;
 let pendingWindowMoveY = 0;
 let pendingWindowMoveFrame = 0;
+let deviceRefreshTimer = 0;
 
 const triggerCatalog: Array<{ category: string; label: string; triggers: Array<{ id: string; displayName: string; fingerCount?: number }> }> = [
   {
@@ -336,9 +337,16 @@ onMounted(async () => {
   window.addEventListener("resize", () => applyDpiScaling(document.documentElement));
   setTheme(theme.value);
   await loadWorkspace();
+  deviceRefreshTimer = window.setInterval(() => {
+    void refreshDeviceConnectivity();
+  }, 2000);
   if (!selectedDeviceId.value && trustedDevices.value[0]) selectedDeviceId.value = trustedDevices.value[0].deviceId;
   if (!selectedPluginId.value && workspace.plugins[0]) selectedPluginId.value = workspace.plugins[0].id;
   if (!permissionSourceId.value && workspace.components[0]) permissionSourceId.value = workspace.components[0].id;
+});
+
+onUnmounted(() => {
+  if (deviceRefreshTimer) window.clearInterval(deviceRefreshTimer);
 });
 
 // 页面预览舞台出现或变化时，重新绑定尺寸观察器。

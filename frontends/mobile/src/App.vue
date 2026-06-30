@@ -55,33 +55,20 @@ const connected = ref(false);
 const updating = ref(false);
 const updateProgress = ref(0);
 const activePage = ref(0);
-const theme = ref<"light" | "dark">("light");
 const host = ref("192.168.1.24");
 const port = ref(48320);
 const code = ref("482913");
 const qrPayload = ref("");
-const toast = ref("每次打开都会先进入连接页");
+const message = ref("请输入桌面端显示的 IP、端口和 6 位验证码。");
 const deviceId = ref("android-preview");
 const desktops = ref<KnownDesktop[]>([]);
 const cachedScheme = ref<CachedScheme | null>(null);
 
-const fallbackPages: CachedPage[] = [
-  {
-    name: "预览方案",
-    tiles: [
-      { label: "录制", icon: "solar:record-circle-bold-duotone", accent: "rose" },
-      { label: "场景", icon: "solar:layers-bold-duotone", accent: "sky" },
-      { label: "麦克风", icon: "solar:microphone-3-bold-duotone", accent: "emerald" },
-      { label: "标记", icon: "solar:bookmark-bold-duotone", accent: "amber" },
-    ],
-  },
-];
-
-const pages = computed<CachedPage[]>(() => cachedScheme.value?.pages.length ? cachedScheme.value.pages : fallbackPages);
-const currentPage = computed(() => pages.value[activePage.value] ?? pages.value[0]);
+const pages = computed<CachedPage[]>(() => cachedScheme.value?.pages ?? []);
+const currentPage = computed(() => pages.value[activePage.value] ?? pages.value[0] ?? null);
+const connectedDesktop = computed(() => desktops.value.find((item) => item.desktopId === cachedScheme.value?.desktopId) ?? desktops.value[0] ?? null);
 
 onMounted(() => {
-  document.documentElement.classList.toggle("dark", theme.value === "dark");
   deviceId.value = window.OneDeskNative?.getDeviceId?.() ?? "android-preview";
   loadKnownDesktops();
 });
@@ -94,14 +81,10 @@ function loadKnownDesktops() {
   }
 }
 
-function setTheme(next: "light" | "dark") {
-  theme.value = next;
-  document.documentElement.classList.toggle("dark", next === "dark");
-}
-
 function connect() {
   updating.value = true;
   updateProgress.value = 12;
+  message.value = "正在连接桌面端...";
   const timer = window.setInterval(() => {
     updateProgress.value += 18;
     if (updateProgress.value >= 100) {
@@ -114,12 +97,13 @@ function connect() {
 
 function connectWithQr() {
   if (!qrPayload.value.trim()) {
-    toast.value = "请先粘贴或扫描二维码内容";
+    message.value = "请先粘贴或扫描二维码内容。";
     return;
   }
 
   updating.value = true;
   updateProgress.value = 40;
+  message.value = "正在读取二维码连接信息...";
   window.setTimeout(() => finishConnect(qrPayload.value), 260);
 }
 
@@ -129,11 +113,11 @@ function finishConnect(qr?: string) {
     : window.OneDeskNative?.connect?.(host.value, port.value, code.value);
   const response = raw ? (JSON.parse(raw) as NativeResponse<{ desktop: KnownDesktop; cacheUpdated: boolean }>) : {
     ok: false,
-    message: "移动端连接必须通过原生壳子转发，网页预览不能模拟连接成功。",
+    message: "移动端连接必须通过 Android 原生壳子转发。",
   };
 
   if (!response.ok || !response.payload) {
-    toast.value = response.message ?? "连接失败";
+    message.value = response.message ?? "连接失败，请检查 IP、端口和验证码。";
     updating.value = false;
     return;
   }
@@ -142,16 +126,20 @@ function finishConnect(qr?: string) {
   loadScheme(response.payload.desktop.desktopId);
   connected.value = true;
   updating.value = false;
-  toast.value = response.payload.cacheUpdated ? "方案缓存已更新" : "已使用本地方案缓存";
+  message.value = pages.value.length > 0 ? "已连接桌面端。" : "已连接桌面端，但当前没有可显示的方案。";
 }
 
 function loadScheme(desktopId: string) {
   const raw = window.OneDeskNative?.getCachedScheme?.(desktopId);
-  if (!raw) return;
-  const response = JSON.parse(raw) as NativeResponse<CachedScheme>;
-  if (response.ok && response.payload) {
-    cachedScheme.value = response.payload;
+  if (!raw) {
+    cachedScheme.value = { desktopId, version: "0", hash: "", updatedAt: "", pages: [] };
+    return;
   }
+
+  const response = JSON.parse(raw) as NativeResponse<CachedScheme>;
+  cachedScheme.value = response.ok && response.payload
+    ? response.payload
+    : { desktopId, version: "0", hash: "", updatedAt: "", pages: [] };
 }
 
 function connectKnown(desktop: KnownDesktop) {
@@ -159,16 +147,13 @@ function connectKnown(desktop: KnownDesktop) {
   port.value = desktop.port;
   code.value = "000000";
   if (!desktop.trusted) {
-    toast.value = "需要重新输入验证码";
+    message.value = "该桌面端需要重新输入验证码。";
     return;
   }
   updating.value = true;
   updateProgress.value = 45;
+  message.value = "正在使用信任凭据连接...";
   window.setTimeout(() => finishConnect(), 120);
-}
-
-function nextPage() {
-  activePage.value = (activePage.value + 1) % pages.value.length;
 }
 
 function accentClass(accent: string) {
@@ -186,27 +171,12 @@ function accentClass(accent: string) {
 
 <template>
   <main class="min-h-screen px-4 py-5 text-slate-950 dark:text-slate-100">
-    <section class="mx-auto flex min-h-[calc(100vh-40px)] max-w-md flex-col overflow-hidden rounded-[32px] border border-white/50 bg-white/60 shadow-2xl shadow-sky-950/12 backdrop-blur-2xl dark:border-white/10 dark:bg-black/70">
-      <header class="flex items-center justify-between bg-white px-5 py-4 dark:bg-slate-950">
-        <div class="flex items-center gap-3">
-          <div class="grid size-10 place-items-center rounded-2xl bg-sky-500 text-white">
-            <Icon icon="solar:command-bold-duotone" class="size-6" />
-          </div>
-          <div>
-            <h1 class="font-semibold">OneDesk</h1>
-            <p class="text-xs text-slate-500 dark:text-slate-400">{{ connected ? currentPage.name : "连接桌面端" }}</p>
-          </div>
-        </div>
-        <button class="grid size-10 place-items-center rounded-2xl bg-slate-100 dark:bg-slate-900" @click="setTheme(theme === 'light' ? 'dark' : 'light')">
-          <Icon :icon="theme === 'light' ? 'solar:moon-bold-duotone' : 'solar:sun-2-bold-duotone'" class="size-5" />
-        </button>
-      </header>
-
+    <section class="mx-auto flex min-h-[calc(100vh-40px)] max-w-md flex-col overflow-hidden rounded-[32px] border border-white/50 bg-white/70 shadow-2xl shadow-sky-950/12 backdrop-blur-2xl dark:border-white/10 dark:bg-black/75">
       <section v-if="!connected" class="flex flex-1 flex-col gap-4 overflow-auto p-5">
         <div class="rounded-3xl bg-sky-500 p-5 text-white shadow-xl shadow-sky-500/25">
           <Icon icon="solar:smartphone-update-bold-duotone" class="size-11" />
-          <h2 class="mt-4 text-[22px] font-semibold">先连接，再显示方案</h2>
-          <p class="mt-2 text-sm text-sky-50">移动端每次打开都会进入连接页，校验桌面端与方案缓存后再显示控制界面。</p>
+          <h1 class="mt-4 text-[22px] font-semibold">连接桌面端</h1>
+          <p class="mt-2 text-sm text-sky-50">首次连接需要输入桌面端显示的验证码；信任后可直接重连。</p>
         </div>
 
         <div class="rounded-3xl bg-white p-4 shadow-lg shadow-sky-950/8 dark:bg-slate-950">
@@ -235,12 +205,13 @@ function accentClass(accent: string) {
             <div class="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-900">
               <div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: `${updateProgress}%` }"></div>
             </div>
-            <p class="mt-2 text-xs text-slate-500">正在校验并更新方案缓存 {{ updateProgress }}%</p>
+            <p class="mt-2 text-xs text-slate-500">正在建立连接 {{ updateProgress }}%</p>
           </div>
+          <p class="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ message }}</p>
         </div>
 
         <div class="rounded-3xl bg-white p-4 shadow-lg shadow-sky-950/8 dark:bg-slate-950">
-          <h3 class="font-semibold">已连接过的桌面端</h3>
+          <h2 class="font-semibold">已信任的桌面端</h2>
           <div class="mt-3 grid gap-2">
             <button v-for="desktop in desktops" :key="desktop.desktopId" class="rounded-2xl bg-slate-100 p-3 text-left dark:bg-slate-900" @click="connectKnown(desktop)">
               <div class="flex items-center justify-between">
@@ -251,20 +222,18 @@ function accentClass(accent: string) {
               </div>
               <p class="mt-1 text-xs text-slate-500">{{ desktop.host }}:{{ desktop.port }} · 方案 {{ desktop.schemeVersion }}</p>
             </button>
-            <p v-if="desktops.length === 0" class="rounded-2xl bg-slate-100 p-3 text-sm text-slate-500 dark:bg-slate-900">暂无连接记录</p>
+            <p v-if="desktops.length === 0" class="rounded-2xl bg-slate-100 p-3 text-sm text-slate-500 dark:bg-slate-900">暂无信任记录</p>
           </div>
         </div>
       </section>
 
       <section v-else class="flex flex-1 flex-col overflow-hidden bg-white p-5 dark:bg-slate-950">
-        <div class="mb-4 flex items-center justify-between">
-          <div>
-            <p class="text-sm text-slate-500">设备 {{ deviceId }}</p>
-            <h2 class="text-2xl font-semibold">{{ currentPage.name }}</h2>
-          </div>
-          <button class="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold dark:bg-slate-900" @click="nextPage">下一页</button>
+        <div class="mb-4">
+          <p class="text-xs text-slate-500">已连接 {{ connectedDesktop?.name ?? "桌面端" }} · {{ deviceId }}</p>
+          <h1 class="mt-1 truncate text-2xl font-semibold">{{ currentPage?.name ?? "暂无方案" }}</h1>
         </div>
-        <div class="grid flex-1 grid-cols-2 grid-rows-2 gap-3 overflow-hidden">
+
+        <div v-if="currentPage && currentPage.tiles.length > 0" class="grid flex-1 grid-cols-2 grid-rows-2 gap-3 overflow-hidden">
           <button v-for="tile in currentPage.tiles" :key="tile.label" class="flex flex-col items-center justify-center overflow-hidden rounded-[28px] bg-slate-100 p-4 active:scale-[0.98] dark:bg-slate-900">
             <span :class="['grid size-14 place-items-center rounded-2xl text-white shadow-lg', accentClass(tile.accent)]">
               <Icon :icon="tile.icon" class="size-8" />
@@ -272,10 +241,12 @@ function accentClass(accent: string) {
             <span class="mt-4 text-lg font-semibold">{{ tile.label }}</span>
           </button>
         </div>
-        <div class="mt-4 flex items-center justify-between text-xs text-slate-500">
-          <span>{{ toast }}</span>
-          <div class="flex gap-2">
-            <span v-for="(_, index) in pages" :key="index" class="h-2 rounded-full transition-all" :class="index === activePage ? 'w-6 bg-sky-500' : 'w-2 bg-slate-300 dark:bg-slate-700'"></span>
+
+        <div v-else class="grid flex-1 place-items-center rounded-[28px] bg-slate-100 p-6 text-center dark:bg-slate-900">
+          <div>
+            <Icon icon="solar:folder-error-bold-duotone" class="mx-auto size-12 text-slate-400" />
+            <p class="mt-3 text-sm font-semibold">当前没有可显示的方案</p>
+            <p class="mt-2 text-xs leading-5 text-slate-500">请在桌面端应用方案到该移动设备后重新连接。</p>
           </div>
         </div>
       </section>
