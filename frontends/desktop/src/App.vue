@@ -2271,16 +2271,13 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
       </div>
     </div>
     <div v-if="showActionDesignerDialog && actionDraft" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
-      <div class="grid max-h-[min(720px,calc(100vh-64px))] w-full max-w-[880px] grid-cols-[260px_1fr] overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-slate-950" data-no-window-drag>
-        <aside class="border-r border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900">
+      <div class="grid h-[min(720px,calc(100vh-64px))] w-full max-w-[880px] grid-cols-[260px_1fr] overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-slate-950" data-no-window-drag>
+        <aside class="min-h-0 border-r border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900">
           <div class="flex items-center justify-between gap-3">
             <div>
               <h3 class="text-[16px] font-semibold">动作流程</h3>
               <p class="mt-1 text-[12px] text-slate-500">按顺序设计触发与执行内容。</p>
             </div>
-            <button class="grid size-8 place-items-center rounded-full bg-white text-slate-500 dark:bg-slate-800" @click="showActionDesignerDialog = false">
-              <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
-            </button>
           </div>
           <div class="mt-5 grid gap-3">
             <div class="action-designer-step">
@@ -2299,13 +2296,18 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             </div>
           </div>
         </aside>
-        <section class="scrollable min-h-0 overflow-auto p-5">
+        <section class="scrollable h-full min-h-0 overflow-auto p-5">
           <div class="flex items-start justify-between gap-3">
             <div>
               <h3 class="text-[16px] font-semibold">动作配置</h3>
               <p class="mt-1 text-[12px] text-slate-500">同一组件内触发必须唯一，保存后动作会绑定到当前组件。</p>
             </div>
-            <button class="rounded-full bg-sky-500 px-5 py-2 text-[13px] font-semibold text-white shadow-lg shadow-sky-500/20" @click="saveActionDesigner">保存动作</button>
+            <div class="flex shrink-0 items-center gap-2">
+              <button class="rounded-full bg-sky-500 px-4 py-1.5 text-[12px] font-semibold text-white shadow-md shadow-sky-500/16" @click="saveActionDesigner">保存</button>
+              <button class="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800" @click="showActionDesignerDialog = false">
+                <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
+              </button>
+            </div>
           </div>
           <div class="mt-5 grid gap-5">
             <section class="editor-section-card">
