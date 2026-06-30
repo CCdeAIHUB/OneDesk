@@ -25,3 +25,23 @@ android {
         }
     }
 }
+
+def mobileFrontendDir = file("../../../../frontends/mobile")
+def pnpmCommand = System.getProperty("os.name").toLowerCase().contains("windows") ? "pnpm.cmd" : "pnpm"
+
+tasks.register("buildMobileFrontend", Exec) {
+    workingDir mobileFrontendDir
+    commandLine pnpmCommand, "build"
+    inputs.files(fileTree(mobileFrontendDir) {
+        include "src/**"
+        include "index.html"
+        include "vite.config.ts"
+        include "package.json"
+        include "tsconfig*.json"
+    })
+    outputs.dir(file("${mobileFrontendDir}/dist"))
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("buildMobileFrontend")
+}

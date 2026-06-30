@@ -7,10 +7,13 @@ import android.app.NotificationManager
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import org.json.JSONArray
@@ -48,7 +51,16 @@ class MainActivity : Activity() {
         webView.settings.allowContentAccess = false
         webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
         webView.addJavascriptInterface(OneDeskBridge(this), "OneDeskNative")
-        webView.webViewClient = BlockingWebViewClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                Log.d(
+                    "OneDeskMobileWeb",
+                    "${consoleMessage.message()} @ ${consoleMessage.sourceId()}:${consoleMessage.lineNumber()}",
+                )
+                return true
+            }
+        }
+        webView.webViewClient = BlockingWebViewClient(this)
 
         setContentView(webView)
         webView.loadUrl("file:///android_asset/index.html")
@@ -293,12 +305,17 @@ class MainActivity : Activity() {
     }
 }
 
-class BlockingWebViewClient : WebViewClient() {
+class BlockingWebViewClient(private val context: Context) : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         return shouldBlock(request.url)
     }
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        val localAsset = openAndroidAsset(request.url)
+        if (localAsset != null) {
+            return localAsset
+        }
+
         return if (shouldBlock(request.url)) {
             WebResourceResponse(
                 "text/plain",
@@ -309,6 +326,55 @@ class BlockingWebViewClient : WebViewClient() {
                 ByteArrayInputStream(ByteArray(0)),
             )
         } else {
+            null
+        }
+    }
+
+    override fun onPageFinished(view: WebView, url: String) {
+        super.onPageFinished(view, url)
+        view.evaluateJavascript(
+            """
+            (function () {
+              var app = document.getElementById('app');
+              return JSON.stringify({
+                url: location.href,
+                title: document.title,
+                bodyText: document.body ? document.body.innerText.slice(0, 120) : '',
+                appHtmlLength: app && app.innerHTML ? app.innerHTML.length : 0,
+                scriptCount: document.scripts.length,
+                firstScript: document.scripts[0] ? document.scripts[0].src : ''
+              });
+            })();
+            """.trimIndent(),
+        ) { result -> Log.d("OneDeskMobileWeb", "DOM probe: $result") }
+    }
+
+    private fun openAndroidAsset(uri: Uri): WebResourceResponse? {
+        if (uri.scheme != "file") {
+            return null
+        }
+
+        val path = uri.path ?: return null
+        if (!path.startsWith("/android_asset/")) {
+            return null
+        }
+
+        val assetPath = path.removePrefix("/android_asset/")
+        val mimeType = when {
+            assetPath.endsWith(".html") -> "text/html"
+            assetPath.endsWith(".js") -> "application/javascript"
+            assetPath.endsWith(".css") -> "text/css"
+            assetPath.endsWith(".json") -> "application/json"
+            assetPath.endsWith(".svg") -> "image/svg+xml"
+            assetPath.endsWith(".png") -> "image/png"
+            assetPath.endsWith(".jpg") || assetPath.endsWith(".jpeg") -> "image/jpeg"
+            assetPath.endsWith(".webp") -> "image/webp"
+            else -> "application/octet-stream"
+        }
+
+        return try {
+            WebResourceResponse(mimeType, "utf-8", context.assets.open(assetPath))
+        } catch (_: Exception) {
             null
         }
     }
