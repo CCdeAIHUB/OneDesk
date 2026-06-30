@@ -773,6 +773,17 @@ select.field {
   border-color: rgb(14 165 233 / 0.6);
 }
 
+.editor-inline-danger {
+  border-color: rgb(244 63 94 / 0.32);
+  background: rgb(244 63 94 / 0.08);
+  color: rgb(225 29 72);
+}
+
+.editor-inline-danger:hover {
+  border-color: rgb(244 63 94 / 0.48);
+  background: rgb(244 63 94 / 0.14);
+}
+
 .editor-inline-primary {
   border: none;
   background: rgb(14 165 233);
@@ -897,6 +908,24 @@ select.field {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+.action-add-step-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed rgb(14 165 233 / 0.45);
+  border-radius: 16px;
+  background: rgb(14 165 233 / 0.08);
+  padding: 9px 12px;
+  color: rgb(2 132 199);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.action-add-step-button-wide {
+  width: 100%;
 }
 
 .editor-icon-button {

@@ -46,6 +46,7 @@ const deviceRemarkDraft = ref<Record<string, string>>({});
 const componentCodeDraft = ref("");
 const selectedCodeFile = ref("src/Component.vue");
 const codeFileDrafts = ref<Record<string, string>>({});
+const actionDraftParametersText = ref<Record<number, string>>({});
 const pendingImportKind = ref<"Component" | "Page" | "Scheme" | null>(null);
 const pendingPluginImport = ref(false);
 const pendingInspection = ref<PackageInspection | null>(null);
@@ -54,7 +55,8 @@ const selectedDeviceId = ref("");
 const selectedPluginId = ref("");
 const pluginSettingsDraft = ref<Record<string, Record<string, unknown>>>({});
 const actionDraft = ref<ActionDefinition | null>(null);
-const actionDraftParametersText = ref("{}");
+const pendingEditorLeave = ref<null | { title: string; proceed: () => void | Promise<void> }>(null);
+const editorSavedSnapshot = ref("");
 const selectedCellId = ref("");
 const pageLivePreview = ref(false);
 const showResourcePicker = ref(false);
@@ -163,7 +165,7 @@ const selectedGrants = computed(() => workspace.permissionGrants.find((grant) =>
 const trustedDevices = computed(() => workspace.deviceStatus?.trusted ?? []);
 const actionDraftInvocation = computed(() => actionDraft.value?.invocations[0] ?? null);
 const actionDraftTriggerLabel = computed(() => actionDraft.value ? triggerLabel(actionDraft.value.trigger) : "\u672a\u9009\u62e9\u89e6\u53d1");
-const actionDraftCapabilityLabel = computed(() => actionDraftInvocation.value?.capability || "\u672a\u9009\u62e9 JSAPI");
+const actionDraftCapabilityLabel = computed(() => actionDraft.value?.invocations.length ? `${actionDraft.value.invocations.length} JSAPI` : "\u672a\u9009\u62e9 JSAPI");
 const currentDevice = computed(() => trustedDevices.value.find((device) => device.deviceId === selectedDeviceId.value) ?? trustedDevices.value[0] ?? null);
 const currentDeviceName = computed(() => currentDevice.value ? (currentDevice.value.remark || currentDevice.value.displayName) : "等待移动设备连接");
 const currentDeviceIcon = computed(() => currentDevice.value ? "solar:smartphone-bold-duotone" : "solar:devices-bold-duotone");
@@ -569,11 +571,77 @@ function navIcon(item: (typeof navItems)[number]) {
 }
 
 function openView(view: ViewKey) {
+  void runWithEditorLeaveGuard(() => {
+    openViewNow(view);
+  });
+}
+
+function openViewNow(view: ViewKey) {
   activeView.value = view;
   if (view !== "component") componentLoadSequence += 1;
   if (view === "component") componentRoute.value = "manager";
   if (view === "page") pageRoute.value = "manager";
   if (view === "scheme") schemeRoute.value = "manager";
+  rememberEditorSavedSnapshot();
+}
+
+function editorSnapshot() {
+  if (activeView.value === "component" && componentRoute.value === "editor" && selectedComponent.value) {
+    return JSON.stringify({
+      component: selectedComponent.value,
+      visualConfig: visualConfig.value,
+      files: codeFileDrafts.value,
+      mode: componentEditorMode.value,
+    });
+  }
+  if (activeView.value === "page" && pageRoute.value === "editor" && selectedPage.value) {
+    ensurePageGridCells(selectedPage.value);
+    return JSON.stringify(selectedPage.value);
+  }
+  if (activeView.value === "scheme" && schemeRoute.value === "editor" && selectedScheme.value) {
+    return JSON.stringify(selectedScheme.value);
+  }
+  return "";
+}
+
+function rememberEditorSavedSnapshot() {
+  editorSavedSnapshot.value = editorSnapshot();
+}
+
+function hasUnsavedEditorChanges() {
+  return Boolean(editorSavedSnapshot.value) && editorSnapshot() !== editorSavedSnapshot.value;
+}
+
+async function saveCurrentEditor() {
+  if (activeView.value === "component") await saveComponent();
+  else if (activeView.value === "page") await savePage();
+  else if (activeView.value === "scheme") await saveScheme();
+}
+
+async function runWithEditorLeaveGuard(proceed: () => void | Promise<void>) {
+  if (!hasUnsavedEditorChanges()) {
+    await proceed();
+    return;
+  }
+  pendingEditorLeave.value = { title: "\u5f53\u524d\u7f16\u8f91\u5185\u5bb9\u5c1a\u672a\u4fdd\u5b58", proceed };
+}
+
+async function confirmEditorLeave(saveBeforeLeave: boolean) {
+  const pending = pendingEditorLeave.value;
+  if (!pending) return;
+  pendingEditorLeave.value = null;
+  if (saveBeforeLeave) {
+    await saveCurrentEditor();
+  }
+  await pending.proceed();
+}
+
+function cancelEditorLeave() {
+  pendingEditorLeave.value = null;
+}
+
+function requestCloseWindow() {
+  void runWithEditorLeaveGuard(() => closeWindow());
 }
 
 function setTheme(next: ThemeMode) {
@@ -707,7 +775,11 @@ function handleWindowPointerMove(event: PointerEvent) {
   document.body.style.cursor = resizeCursorMap[edge] ?? "";
 }
 
-async function chooseComponent(component: ComponentDefinition) {
+async function chooseComponent(component: ComponentDefinition, skipGuard = false) {
+  if (!skipGuard && componentRoute.value === "editor" && workspace.selectedComponentId !== component.id) {
+    await runWithEditorLeaveGuard(() => chooseComponent(component, true));
+    return;
+  }
   if (loadingComponentId.value === component.id) return;
   const loadSequence = ++componentLoadSequence;
   loadingComponentId.value = component.id;
@@ -719,21 +791,32 @@ async function chooseComponent(component: ComponentDefinition) {
     if (loadSequence !== componentLoadSequence || workspace.selectedComponentId !== component.id) return;
     componentEditorMode.value = String(component.editMode).toLowerCase() === "code" ? "code" : "visual";
     componentRoute.value = "editor";
+    rememberEditorSavedSnapshot();
   } finally {
     if (loadingComponentId.value === component.id) loadingComponentId.value = "";
   }
 }
 
-function choosePage(page: PageDefinition) {
+function choosePage(page: PageDefinition, skipGuard = false) {
+  if (!skipGuard && pageRoute.value === "editor" && workspace.selectedPageId !== page.id) {
+    void runWithEditorLeaveGuard(() => choosePage(page, true));
+    return;
+  }
   ensurePageGridCells(page);
   workspace.selectedPageId = page.id;
   selectedCellId.value = page.cells[0]?.id ?? "";
   pageRoute.value = "editor";
+  rememberEditorSavedSnapshot();
 }
 
-function chooseScheme(scheme: SchemeDefinition) {
+function chooseScheme(scheme: SchemeDefinition, skipGuard = false) {
+  if (!skipGuard && schemeRoute.value === "editor" && workspace.selectedSchemeId !== scheme.id) {
+    void runWithEditorLeaveGuard(() => chooseScheme(scheme, true));
+    return;
+  }
   workspace.selectedSchemeId = scheme.id;
   schemeRoute.value = "editor";
+  rememberEditorSavedSnapshot();
 }
 
 async function performDelete() {
@@ -891,6 +974,7 @@ async function createPage() {
   workspace.selectedPageId = id;
   selectedCellId.value = page.cells[0]?.id ?? "";
   pageRoute.value = "editor";
+  rememberEditorSavedSnapshot();
 }
 
 async function createScheme() {
@@ -913,6 +997,7 @@ async function createScheme() {
   await loadWorkspace({ preserveSelection: true, selectedSchemeId: id });
   workspace.selectedSchemeId = id;
   schemeRoute.value = "editor";
+  rememberEditorSavedSnapshot();
 }
 
 async function exportComponent(component?: ComponentDefinition) {
@@ -972,6 +1057,7 @@ async function saveComponent() {
   const fileResponse = await sendShell<Record<string, string>>("workspace.saveComponentFiles", { id: selectedComponent.value.id, files: codeFileDrafts.value });
   announceToast(response.ok && fileResponse.ok ? "组件与代码文件已保存" : response.message ?? fileResponse.message ?? "组件保存失败");
   await loadWorkspace({ preserveSelection: true, selectedComponentId: selectedComponent.value.id });
+  rememberEditorSavedSnapshot();
 }
 
 function addComponentAction() {
@@ -998,7 +1084,7 @@ function openActionDesigner(action?: ActionDefinition) {
     invocations: [defaultActionInvocation()],
   };
   actionDraft.value = draft;
-  actionDraftParametersText.value = JSON.stringify(draft.invocations[0]?.parameters ?? {}, null, 2);
+  actionDraftParametersText.value = Object.fromEntries(draft.invocations.map((item, index) => [index, JSON.stringify(item.parameters ?? {}, null, 2)]));
   showActionDesignerDialog.value = true;
 }
 
@@ -1015,6 +1101,22 @@ function changeActionDraftTrigger(triggerId: string) {
   actionDraft.value.trigger = buildTriggerDefinition(findTrigger(triggerId));
 }
 
+function addActionDraftInvocation() {
+  if (!actionDraft.value) return;
+  actionDraft.value.invocations = [...actionDraft.value.invocations, defaultActionInvocation()];
+  const index = actionDraft.value.invocations.length - 1;
+  actionDraftParametersText.value = {
+    ...actionDraftParametersText.value,
+    [index]: JSON.stringify(actionDraft.value.invocations[index].parameters ?? {}, null, 2),
+  };
+}
+
+function removeActionDraftInvocation(index: number) {
+  if (!actionDraft.value || actionDraft.value.invocations.length <= 1) return;
+  actionDraft.value.invocations = actionDraft.value.invocations.filter((_, itemIndex) => itemIndex !== index);
+  actionDraftParametersText.value = Object.fromEntries(actionDraft.value.invocations.map((item, itemIndex) => [itemIndex, JSON.stringify(item.parameters ?? {}, null, 2)]));
+}
+
 async function saveActionDesigner() {
   if (!selectedComponent.value || !actionDraft.value || !actionDraftInvocation.value) return;
   const duplicated = selectedComponentActions.value.some((item) => item.id !== actionDraft.value?.id && item.trigger.id === actionDraft.value?.trigger.id);
@@ -1023,7 +1125,10 @@ async function saveActionDesigner() {
     return;
   }
   try {
-    actionDraftInvocation.value.parameters = JSON.parse(actionDraftParametersText.value || "{}") as Record<string, unknown>;
+    actionDraft.value.invocations = actionDraft.value.invocations.map((invocation, index) => ({
+      ...invocation,
+      parameters: JSON.parse(actionDraftParametersText.value[index] || "{}") as Record<string, unknown>,
+    }));
   } catch {
     announceToast("JSAPI \u53c2\u6570\u5fc5\u987b\u662f\u6709\u6548 JSON");
     return;
@@ -1276,6 +1381,7 @@ async function savePage() {
   const response = await sendShell<PageDefinition>("workspace.savePage", selectedPage.value);
   announceToast(response.ok ? "页面已保存" : response.message ?? "页面保存失败");
   await loadWorkspace({ preserveSelection: true, selectedPageId: selectedPage.value.id });
+  rememberEditorSavedSnapshot();
 }
 
 async function saveScheme() {
@@ -1284,6 +1390,7 @@ async function saveScheme() {
   const response = await sendShell<SchemeDefinition>("workspace.saveScheme", selectedScheme.value);
   announceToast(response.ok ? "方案已保存" : response.message ?? "方案保存失败");
   await loadWorkspace({ preserveSelection: true, selectedSchemeId: selectedScheme.value.id });
+  rememberEditorSavedSnapshot();
 }
 
 function addPageToScheme(pageId: string) {
@@ -1548,7 +1655,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             <div class="window-controls ml-2 flex items-center gap-1 text-slate-500 dark:text-slate-300">
               <button class="window-control" title="最小化" @click="minimizeWindow"><span class="win-symbol">&#xE921;</span></button>
               <button class="window-control" :title="isMaximized ? '还原' : '最大化'" @click="toggleMaximize"><span class="win-symbol" v-html="isMaximized ? '&#xE923;' : '&#xE922;'"></span></button>
-              <button class="window-control window-control-close" title="关闭" @click="closeWindow"><span class="win-symbol">&#xE8BB;</span></button>
+              <button class="window-control window-control-close" title="关闭" @click="requestCloseWindow"><span class="win-symbol">&#xE8BB;</span></button>
             </div>
           </div>
         </header>
@@ -1730,8 +1837,8 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                         </div>
                       </div>
                       <div class="grid shrink-0 gap-2">
-                        <button class="card-action" @click="openActionDesigner(action)"><Icon icon="solar:pen-bold-duotone" class="size-4" />编辑</button>
-                        <button class="card-action danger" @click="removeComponentAction(action.id)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-4" />删除</button>
+                        <button class="editor-inline-button" @click="openActionDesigner(action)"><Icon icon="solar:pen-bold-duotone" class="size-[14px]" />编辑</button>
+                        <button class="editor-inline-button editor-inline-danger" @click="removeComponentAction(action.id)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-[14px]" />删除</button>
                       </div>
                     </div>
                     <p v-if="!selectedComponentActions.length" class="editor-empty-hint">暂无动作。点击添加动作后，在流程设计器里配置触发与 JSAPI 调用。</p>
@@ -2287,13 +2394,16 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <b>{{ actionDraftTriggerLabel }}</b>
               </div>
             </div>
-            <div class="action-designer-step">
-              <span>2</span>
+            <div v-for="(invocation, index) in actionDraft.invocations" :key="index" class="action-designer-step">
+              <span>{{ index + 2 }}</span>
               <div>
                 <p>动作</p>
-                <b>调用 JSAPI · {{ actionDraftCapabilityLabel }}</b>
+                <b>调用 JSAPI · {{ invocation.capability || "未设置" }}</b>
               </div>
             </div>
+            <button class="action-add-step-button" type="button" @click="addActionDraftInvocation">
+              <Icon icon="solar:add-circle-bold-duotone" class="size-4" />增加下一步动作
+            </button>
           </div>
         </aside>
         <section class="scrollable h-full min-h-0 overflow-auto p-5">
@@ -2303,7 +2413,10 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               <p class="mt-1 text-[12px] text-slate-500">同一组件内触发必须唯一，保存后动作会绑定到当前组件。</p>
             </div>
             <div class="flex shrink-0 items-center gap-2">
-              <button class="rounded-full bg-sky-500 px-4 py-1.5 text-[12px] font-semibold text-white shadow-md shadow-sky-500/16" @click="saveActionDesigner">保存</button>
+              <span class="text-[16px] font-semibold">保存</span>
+              <button class="grid size-8 place-items-center rounded-full bg-sky-500 text-white shadow-md shadow-sky-500/16" @click="saveActionDesigner">
+                <Icon icon="solar:diskette-bold-duotone" class="size-5" />
+              </button>
               <button class="grid size-8 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-800" @click="showActionDesignerDialog = false">
                 <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
               </button>
@@ -2325,19 +2438,34 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 </select>
               </label>
             </section>
-            <section v-if="actionDraft.invocations[0]" class="editor-section-card">
-              <div class="editor-section-head"><h3>动作</h3><p>当前执行内容为调用 JSAPI，后续可以继续追加更多执行节点。</p></div>
+            <section v-for="(invocation, index) in actionDraft.invocations" :key="index" class="editor-section-card">
+              <div class="editor-section-head editor-section-head-row"><div><h3>动作 {{ index + 1 }}</h3><p>执行内容为调用 JSAPI，可继续追加下一步动作。</p></div><button v-if="actionDraft.invocations.length > 1" class="editor-icon-button" type="button" @click="removeActionDraftInvocation(index)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-[16px]" /></button></div>
               <div class="editor-form-row">
-                <label class="field-label editor-field-grow"><span>目标设备 ID</span><input v-model="actionDraft.invocations[0].targetDeviceId" class="field" placeholder="desktop 或设备 ID" /></label>
-                <label class="field-label editor-field-grow"><span>JSAPI 能力</span><input v-model="actionDraft.invocations[0].capability" class="field" list="action-capability-list" placeholder="notification.native" /></label>
+                <label class="field-label editor-field-grow"><span>目标设备 ID</span><input v-model="invocation.targetDeviceId" class="field" placeholder="desktop 或设备 ID" /></label>
+                <label class="field-label editor-field-grow"><span>JSAPI 能力</span><input v-model="invocation.capability" class="field" list="action-capability-list" placeholder="notification.native" /></label>
               </div>
-              <datalist id="action-capability-list">
-                <option v-for="capability in permissionRows" :key="capability.id" :value="capability.id">{{ capability.name }} · {{ capability.description }}</option>
-              </datalist>
-              <label class="field-label mt-3"><span>参数 JSON</span><textarea v-model="actionDraftParametersText" class="field min-h-[132px] resize-none font-mono text-[12px]" spellcheck="false"></textarea></label>
+              <label class="field-label mt-3"><span>参数 JSON</span><textarea v-model="actionDraftParametersText[index]" class="field min-h-[132px] resize-none font-mono text-[12px]" spellcheck="false"></textarea></label>
             </section>
+            <button class="action-add-step-button action-add-step-button-wide" type="button" @click="addActionDraftInvocation">
+              <Icon icon="solar:add-circle-bold-duotone" class="size-4" />增加下一步动作
+            </button>
+            <datalist id="action-capability-list">
+              <option v-for="capability in permissionRows" :key="capability.id" :value="capability.id">{{ capability.name }} · {{ capability.description }}</option>
+            </datalist>
           </div>
         </section>
+      </div>
+    </div>
+    <div v-if="pendingEditorLeave" class="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
+      <div class="w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950" data-no-window-drag>
+        <Icon icon="solar:diskette-bold-duotone" class="size-9 text-sky-500" />
+        <h3 class="mt-3 text-[16px] font-semibold">{{ pendingEditorLeave.title }}</h3>
+        <p class="mt-2 text-[13px] leading-6 text-slate-500">检测到当前编辑内容与上一次保存状态不同。离开前可以保存，也可以放弃这次修改。</p>
+        <div class="mt-4 grid grid-cols-3 gap-2">
+          <button class="rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="confirmEditorLeave(true)">保存</button>
+          <button class="rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium text-rose-500 dark:bg-slate-900" @click="confirmEditorLeave(false)">不保存</button>
+          <button class="rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="cancelEditorLeave">取消</button>
+        </div>
       </div>
     </div>
     <div v-if="showPermissionDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
