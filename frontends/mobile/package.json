@@ -9,6 +9,7 @@
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
+    "@iconify-json/solar": "^1.2.5",
     "@iconify/vue": "latest",
     "@onedesk/protocol": "workspace:*",
     "@tailwindcss/vite": "latest",
