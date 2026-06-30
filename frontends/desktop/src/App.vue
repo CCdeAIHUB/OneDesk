@@ -3,7 +3,7 @@ import { Icon } from "@iconify/vue";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import QRCode from "qrcode";
 import CodeMirrorEditor from "./components/CodeMirrorEditor.vue";
-import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
+import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TriggerDefinition, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, moveWindowBy, sendShell, setShellTheme, startWindowResize } from "./nativeBridge";
 import {
@@ -129,6 +129,16 @@ const triggerOptions = computed(() => triggerCatalog.flatMap((group) => group.tr
 
 function findTrigger(id: string) {
   return triggerOptions.value.find((trigger) => trigger.id === id) ?? { id, displayName: id, category: "touch.standard" };
+}
+
+function buildTriggerDefinition(trigger: { id: string; category: string; displayName: string; fingerCount?: number; platformLimited?: boolean }): TriggerDefinition {
+  return {
+    id: trigger.id,
+    category: trigger.category,
+    displayName: trigger.displayName,
+    fingerCount: trigger.fingerCount ?? (trigger.category === "sensor" ? 0 : 1),
+    platformLimited: trigger.platformLimited,
+  };
 }
 
 function triggerLabel(trigger: { id: string; displayName: string }) {
@@ -965,7 +975,7 @@ async function addComponentAction() {
   const action: ActionDefinition = {
     id: `action-${crypto.randomUUID()}`,
     name: "新动作",
-    trigger: { id: fallbackTrigger.id, category: fallbackTrigger.category, displayName: fallbackTrigger.displayName, fingerCount: fallbackTrigger.fingerCount },
+    trigger: buildTriggerDefinition(fallbackTrigger),
     invocations: [{ targetDeviceId: "desktop", capability: "notification.native", parameters: { title: "OneDesk", message: "动作已触发" } }],
   };
   const actionResponse = await sendShell<ActionDefinition>("workspace.saveAction", action);
@@ -979,14 +989,14 @@ async function addComponentAction() {
 
 function changeActionTrigger(action: ActionDefinition, triggerId: string) {
   const trigger = findTrigger(triggerId);
-  action.trigger = { id: trigger.id, category: trigger.category, displayName: trigger.displayName, fingerCount: (trigger as { fingerCount?: number }).fingerCount };
+  action.trigger = buildTriggerDefinition(trigger);
   void sendShell("workspace.saveAction", action);
 }
 
 function changeSchemeGlobalTrigger(target: "previous" | "next", triggerId: string) {
   if (!selectedScheme.value) return;
   const trigger = findTrigger(triggerId);
-  const next = { id: trigger.id, category: trigger.category, displayName: trigger.displayName, fingerCount: (trigger as { fingerCount?: number }).fingerCount };
+  const next = buildTriggerDefinition(trigger);
   if (target === "previous") selectedScheme.value.globalPrevious.trigger = next;
   else selectedScheme.value.globalNext.trigger = next;
 }
