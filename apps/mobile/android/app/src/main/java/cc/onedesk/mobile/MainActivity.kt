@@ -30,7 +30,7 @@ import java.util.UUID
 
 class MainActivity : Activity() {
     companion object {
-        private const val CACHE_SCHEMA_VERSION = 2
+        private const val CACHE_SCHEMA_VERSION = 3
     }
 
     private lateinit var webView: WebView
@@ -216,6 +216,37 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun refreshScheme(desktopId: String): String {
+            val desktop = findDesktopById(desktopId)
+                ?: return response(false).put("errorCode", "DesktopNotFound").put("message", "未找到该桌面端信任记录").toString()
+            val trustCredential = desktop.optString("trustCredential")
+            if (trustCredential.isBlank()) {
+                return response(false).put("errorCode", "TrustCredentialMissing").put("message", "该桌面端缺少信任凭据").toString()
+            }
+
+            return try {
+                val request = JSONObject()
+                    .put("type", "scheme")
+                    .put("deviceId", currentDeviceId())
+                    .put("displayName", android.os.Build.MODEL ?: "Android")
+                    .put("platform", "android")
+                    .put("architecture", System.getProperty("os.arch") ?: "unknown")
+                    .put("trustCredential", trustCredential)
+                val gateway = sendGateway(desktop.getString("host"), desktop.optInt("port", 48320), request)
+                if (!gateway.optBoolean("ok")) {
+                    return gateway.toString()
+                }
+
+                val scheme = gateway.getJSONObject("payload").getJSONObject("scheme")
+                cacheScheme(desktopId, scheme)
+                response(true).put("payload", JSONObject().put("cacheUpdated", true)).toString()
+            } catch (ex: Exception) {
+                appendDisconnectedLog("Error", "SchemeRefresh", ex.message ?: "刷新方案失败")
+                response(false).put("errorCode", "SchemeRefreshFailed").put("message", ex.message ?: "刷新方案失败").toString()
+            }
+        }
+
+        @JavascriptInterface
         fun callJsApi(targetDeviceId: String, capability: String, payloadJson: String): String {
             val base = response(false)
                     .put("requestId", "req-${UUID.randomUUID()}")
@@ -271,6 +302,17 @@ class MainActivity : Activity() {
             for (index in 0 until list.length()) {
                 val item = list.getJSONObject(index)
                 if (item.optString("host") == host && item.optInt("port") == port) {
+                    return item
+                }
+            }
+            return null
+        }
+
+        private fun findDesktopById(desktopId: String): JSONObject? {
+            val list = JSONArray(listKnownDesktops())
+            for (index in 0 until list.length()) {
+                val item = list.getJSONObject(index)
+                if (item.optString("desktopId") == desktopId) {
                     return item
                 }
             }

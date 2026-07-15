@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Icon } from "@iconify/vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 interface KnownDesktop {
   desktopId: string;
@@ -43,6 +43,7 @@ declare global {
       connect?: (host: string, port: number, code: string) => string;
       connectByQr?: (qrPayload: string) => string;
       getCachedScheme?: (desktopId: string) => string;
+      refreshScheme?: (desktopId: string) => string;
     };
   }
 }
@@ -58,11 +59,16 @@ const qrPayload = ref("");
 const message = ref("请输入桌面端显示的 IP、端口和 6 位验证码。");
 const desktops = ref<KnownDesktop[]>([]);
 const cachedScheme = ref<CachedScheme | null>(null);
+let schemeRefreshTimer = 0;
 
 const pages = computed<CachedPage[]>(() => cachedScheme.value?.pages ?? []);
 const currentPage = computed(() => pages.value[activePage.value] ?? pages.value[0] ?? null);
 
 onMounted(loadKnownDesktops);
+
+onUnmounted(() => {
+  if (schemeRefreshTimer) window.clearInterval(schemeRefreshTimer);
+});
 
 function loadKnownDesktops() {
   try {
@@ -122,6 +128,7 @@ function finishConnect(qr?: string) {
   loadScheme(response.payload.desktop.desktopId);
   connected.value = true;
   updating.value = false;
+  startSchemeRefresh(response.payload.desktop.desktopId);
 }
 
 function loadScheme(desktopId: string) {
@@ -151,6 +158,20 @@ function connectKnown(desktop: KnownDesktop) {
   window.setTimeout(() => finishConnect(), 120);
 }
 
+function startSchemeRefresh(desktopId: string) {
+  if (schemeRefreshTimer) window.clearInterval(schemeRefreshTimer);
+  schemeRefreshTimer = window.setInterval(() => {
+    const raw = window.OneDeskNative?.refreshScheme?.(desktopId);
+    if (!raw) return;
+    try {
+      const response = JSON.parse(raw) as NativeResponse<{ cacheUpdated: boolean }>;
+      if (response.ok) loadScheme(desktopId);
+    } catch {
+      // 轮询失败不打断控制界面，断联日志由原生壳子负责记录。
+    }
+  }, 2500);
+}
+
 function accentClass(accent: string) {
   return {
     rose: "bg-rose-500",
@@ -166,7 +187,7 @@ function accentClass(accent: string) {
 
 <template>
   <main v-if="!connected" class="min-h-screen bg-gradient-to-br from-sky-50 via-white to-cyan-50 px-4 py-5 text-slate-950">
-    <section class="mx-auto flex min-h-[calc(100vh-40px)] max-w-md flex-col gap-4 overflow-auto rounded-[32px] border border-white/60 bg-white/70 p-5 shadow-2xl shadow-sky-950/12 backdrop-blur-2xl">
+    <section class="mx-auto flex min-h-[calc(100vh-40px)] max-w-md flex-col gap-4 overflow-auto p-5">
       <div class="rounded-3xl bg-sky-500 p-5 text-white shadow-xl shadow-sky-500/25">
         <Icon icon="solar:smartphone-update-bold-duotone" class="size-11" />
         <h1 class="mt-4 text-[22px] font-semibold">连接桌面端</h1>
@@ -223,8 +244,8 @@ function accentClass(accent: string) {
   </main>
 
   <main v-else class="min-h-screen bg-white text-slate-950">
-    <section v-if="currentPage && currentPage.tiles.length > 0" class="grid h-screen w-screen grid-cols-2 grid-rows-2 gap-3 overflow-hidden p-3">
-      <button v-for="tile in currentPage.tiles" :key="tile.label" class="flex min-h-0 flex-col items-center justify-center overflow-hidden rounded-[28px] bg-slate-100 p-4 active:scale-[0.98]">
+    <section v-if="currentPage && currentPage.tiles.length > 0" class="grid h-screen w-screen grid-cols-2 grid-rows-2 gap-0 overflow-hidden p-0">
+      <button v-for="tile in currentPage.tiles" :key="tile.label" class="flex min-h-0 flex-col items-center justify-center overflow-hidden bg-slate-100 p-4 active:scale-[0.98]">
         <span :class="['grid size-14 place-items-center rounded-2xl text-white shadow-lg', accentClass(tile.accent)]">
           <Icon :icon="tile.icon" class="size-8" />
         </span>

@@ -73,6 +73,7 @@ public sealed partial class MainForm : Form
     private CapabilityDirectoryService? _capabilityDirectory;
     private PairingService? _pairing;
     private QuicGatewayService? _gateway;
+    private DesktopSettingsService? _desktopSettings;
     private PluginHostService? _plugins;
     private StructuredLogStore? _logs;
     private Label? _loadingLabel;
@@ -315,6 +316,7 @@ public sealed partial class MainForm : Form
         collection.AddSingleton<StructuredLogStore>();
         collection.AddSingleton<PairingService>();
         collection.AddSingleton<QuicGatewayService>();
+        collection.AddSingleton<DesktopSettingsService>();
         collection.AddSingleton<OneDeskDataPaths>();
         collection.AddSingleton<JsonFileStore>();
         collection.AddSingleton<OneDeskRepository>();
@@ -334,11 +336,13 @@ public sealed partial class MainForm : Form
         _capabilityDirectory = _services.GetRequiredService<CapabilityDirectoryService>();
         _pairing = _services.GetRequiredService<PairingService>();
         _gateway = _services.GetRequiredService<QuicGatewayService>();
+        _desktopSettings = _services.GetRequiredService<DesktopSettingsService>();
         _plugins = _services.GetRequiredService<PluginHostService>();
         _logs = _services.GetRequiredService<StructuredLogStore>();
         AppDiagnostics.Write("Core services resolved.");
         await _services.GetRequiredService<WorkspaceBootstrapper>().EnsureSeedDataAsync();
-        await _gateway.StartAsync();
+        var desktopSettings = await _desktopSettings.LoadAsync();
+        await _gateway.StartAsync(desktopSettings.GatewayPort);
         AppDiagnostics.Write("Service initialization completed.");
     }
 
@@ -634,6 +638,8 @@ public sealed partial class MainForm : Form
                 "device.status" => HandleDeviceStatus(message),
                 "device.rename" => HandleDeviceRename(message),
                 "gateway.status" => HandleGatewayStatus(message),
+                "settings.get" => await HandleSettingsGetAsync(message),
+                "settings.update" => await HandleSettingsUpdateAsync(message),
                 "scheme.cacheManifest" => await HandleSchemeCacheManifestAsync(message),
                 "plugin.list" => new BridgeResponse(message.RequestId, true, _plugins?.InstalledPlugins ?? []),
                 "plugin.inspectImport" => HandleInspectPluginImport(message),
@@ -1412,6 +1418,73 @@ public sealed partial class MainForm : Form
             peers = _gateway?.Peers ?? [],
             queuedRequests = _gateway?.QueuedRequests ?? []
         };
+    }
+
+    private async Task<BridgeResponse> HandleSettingsGetAsync(BridgeMessage message)
+    {
+        if (_desktopSettings is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var settings = await _desktopSettings.LoadAsync();
+        return new BridgeResponse(message.RequestId, true, settings with
+        {
+            GatewayPort = _gateway?.Port ?? settings.GatewayPort
+        });
+    }
+
+    private async Task<BridgeResponse> HandleSettingsUpdateAsync(BridgeMessage message)
+    {
+        if (_desktopSettings is null || _gateway is null)
+        {
+            return ShellNotReady(message);
+        }
+
+        var requested = DeserializePayload<DesktopAppSettings>(message);
+        if (requested is null || requested.GatewayPort is < 1024 or > 65535)
+        {
+            return new BridgeResponse(message.RequestId, false, null, "InvalidSettings", "监听端口必须在 1024 到 65535 之间");
+        }
+
+        var current = await _desktopSettings.LoadAsync();
+        var portChanged = requested.GatewayPort != _gateway.Port;
+        if (portChanged)
+        {
+            await _gateway.StopAsync();
+            try
+            {
+                await _gateway.StartAsync(requested.GatewayPort);
+            }
+            catch (Exception ex)
+            {
+                // 新端口不可用时恢复原端口，避免一次错误设置让移动端网关完全离线。
+                await _gateway.StartAsync(current.GatewayPort);
+                return new BridgeResponse(message.RequestId, false, null, "GatewayPortUnavailable", $"端口 {requested.GatewayPort} 无法监听：{ex.Message}");
+            }
+        }
+
+        try
+        {
+            await _desktopSettings.SaveAsync(requested);
+        }
+        catch (Exception ex)
+        {
+            if (portChanged)
+            {
+                await _gateway.StopAsync();
+                await _gateway.StartAsync(current.GatewayPort);
+            }
+
+            return new BridgeResponse(message.RequestId, false, null, "SettingsSaveFailed", ex.Message);
+        }
+
+        _logs?.Append(_devices?.DesktopIdentity.DeviceId ?? "desktop", "Info", "Settings", "桌面设置已更新", new Dictionary<string, object?>
+        {
+            ["startWithWindows"] = requested.StartWithWindows,
+            ["gatewayPort"] = requested.GatewayPort
+        });
+        return new BridgeResponse(message.RequestId, true, requested);
     }
 
     private async Task<BridgeResponse> HandlePluginImportAsync(BridgeMessage message)

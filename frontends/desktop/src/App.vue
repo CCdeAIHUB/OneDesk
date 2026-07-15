@@ -3,6 +3,7 @@ import { Icon } from "@iconify/vue";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import QRCode from "qrcode";
 import CodeMirrorEditor from "./components/CodeMirrorEditor.vue";
+import UiSelect from "./components/UiSelect.vue";
 import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TriggerDefinition, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, refreshDeviceConnectivity, workspace } from "./workspace";
 import { closeWindow, maximizeWindow, minimizeWindow, moveWindowBy, sendShell, setShellTheme, startWindowResize } from "./nativeBridge";
@@ -22,8 +23,17 @@ import {
   type VisualTextLayer,
 } from "./editorVisualConfig";
 
+const THEME_STORAGE_KEY = "onedesk.theme";
+const LANGUAGE_STORAGE_KEY = "onedesk.language";
+
+function storedTheme(): ThemeMode {
+  const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+  return value === "light" || value === "dark" || value === "system" ? value : "system";
+}
+
 const activeView = ref<ViewKey>("home");
-const theme = ref<ThemeMode>("system");
+const theme = ref<ThemeMode>(storedTheme());
+const language = ref(window.localStorage.getItem(LANGUAGE_STORAGE_KEY) || "zh-CN");
 const settingsSection = ref<"general" | "connection" | "permission" | "logs" | "plugins" | "resources">("general");
 const componentRoute = ref<SectionRoute>("manager");
 const pageRoute = ref<SectionRoute>("manager");
@@ -35,8 +45,8 @@ const previewRatio = ref("1:1");
 const showPermissionDialog = ref(false);
 const showCodeSwitchDialog = ref(false);
 const showActionDesignerDialog = ref(false);
-const showDeviceMenu = ref(false);
 const showDeviceDialog = ref(false);
+const showSchemeApplyDialog = ref(false);
 const exporting = ref(false);
 const exportProgress = ref(0);
 const isMaximized = ref(false);
@@ -52,6 +62,7 @@ const pendingPluginImport = ref(false);
 const pendingInspection = ref<PackageInspection | null>(null);
 const grantedImportCapabilities = ref<string[]>([]);
 const selectedDeviceId = ref("");
+const applyTargetDeviceId = ref("");
 const selectedPluginId = ref("");
 const pluginSettingsDraft = ref<Record<string, Record<string, unknown>>>({});
 const actionDraft = ref<ActionDefinition | null>(null);
@@ -68,8 +79,12 @@ const draggingTextLayerId = ref<string | null>(null);
 const resizingTextLayerId = ref<string | null>(null);
 const enableStartup = ref(false);
 const connectionPort = ref(48320);
+const savedConnectionPort = ref(48320);
+const savingSettings = ref(false);
+const savingEditor = ref(false);
 const toasts = ref<Array<{ id: number; message: string }>>([]);
 const draggingSchemePageIndex = ref<number | null>(null);
+const schemePageToAddId = ref("");
 const permissionSourceKind = ref<"component" | "plugin">("component");
 const permissionSourceId = ref("");
 const visualConfig = ref<VisualConfig>(defaultVisualConfig());
@@ -85,6 +100,7 @@ let pendingWindowMoveX = 0;
 let pendingWindowMoveY = 0;
 let pendingWindowMoveFrame = 0;
 let deviceRefreshTimer = 0;
+let systemThemeMedia: MediaQueryList | null = null;
 
 const triggerCatalog: Array<{ category: string; label: string; triggers: Array<{ id: string; displayName: string; fingerCount?: number }> }> = [
   {
@@ -132,6 +148,58 @@ const triggerCatalog: Array<{ category: string; label: string; triggers: Array<{
 ];
 
 const triggerOptions = computed(() => triggerCatalog.flatMap((group) => group.triggers.map((trigger) => ({ ...trigger, category: group.category }))));
+const triggerSelectOptions = computed(() => triggerCatalog.flatMap((group) => group.triggers.map((trigger) => ({ value: trigger.id, label: trigger.displayName, group: group.label }))));
+const layoutOptions = [
+  { value: "center", label: "居中" },
+  { value: "left", label: "靠左" },
+  { value: "right", label: "靠右" },
+  { value: "bottom", label: "靠下" },
+];
+const backgroundKindOptions = [
+  { value: "gradient", label: "渐变背景" },
+  { value: "solid", label: "纯色背景" },
+  { value: "image", label: "图片背景" },
+  { value: "video", label: "视频背景" },
+];
+const imageSizeOptions = [
+  { value: "cover", label: "填充覆盖" },
+  { value: "contain", label: "完整显示" },
+];
+const positionOptions = [
+  { value: "center", label: "居中" },
+  { value: "left", label: "靠左" },
+  { value: "right", label: "靠右" },
+  { value: "top", label: "靠上" },
+  { value: "bottom", label: "靠下" },
+];
+const horizontalAlignOptions = positionOptions.filter((option) => ["left", "center", "right"].includes(option.value));
+const verticalAlignOptions = positionOptions.filter((option) => ["top", "center", "bottom"].includes(option.value));
+const pressedStateOptions = [
+  { value: "scale-95", label: "按下缩小" },
+  { value: "brightness-110", label: "按下高亮" },
+  { value: "none", label: "无" },
+];
+const lockedStateOptions = [
+  { value: "opacity-60", label: "降低透明度" },
+  { value: "grayscale", label: "增加灰度蒙层" },
+  { value: "none", label: "无" },
+];
+const outlineStyleOptions = [
+  { value: "solid", label: "实线" },
+  { value: "dashed", label: "虚线" },
+  { value: "dotted", label: "点线" },
+];
+const animationOptions = [
+  { value: "fade", label: "渐入渐退" },
+  { value: "slide", label: "滑动" },
+  { value: "none", label: "无动画" },
+];
+const themeOptions = [
+  { value: "system", label: "跟随系统" },
+  { value: "light", label: "浅色" },
+  { value: "dark", label: "深色" },
+];
+const languageOptions = [{ value: "zh-CN", label: "简体中文" }];
 
 function findTrigger(id: string) {
   return triggerOptions.value.find((trigger) => trigger.id === id) ?? { id, displayName: id, category: "touch.standard" };
@@ -161,6 +229,7 @@ const permissionSourceOptions = computed(() => [
   ...workspace.components.map((component) => ({ kind: "component" as const, id: component.id, label: `组件 · ${component.name}` })),
   ...workspace.plugins.map((plugin) => ({ kind: "plugin" as const, id: plugin.id, label: `插件 · ${plugin.name}` })),
 ]);
+const permissionSourceSelectOptions = computed(() => permissionSourceOptions.value.map((option) => ({ value: `${option.kind}:${option.id}`, label: option.label })));
 const permissionSourceLabel = computed(() => permissionSourceOptions.value.find((option) => option.kind === permissionSourceKind.value && option.id === permissionSourceId.value)?.label ?? "未选择授权对象");
 const selectedGrants = computed(() => workspace.permissionGrants.find((grant) => grant.sourceKey === permissionSourceKey.value)?.capabilities ?? []);
 const trustedDevices = computed(() => workspace.deviceStatus?.trusted ?? []);
@@ -170,6 +239,23 @@ const actionDraftCapabilityLabel = computed(() => actionDraft.value?.invocations
 const currentDevice = computed(() => trustedDevices.value.find((device) => device.deviceId === selectedDeviceId.value) ?? trustedDevices.value[0] ?? null);
 const currentDeviceName = computed(() => currentDevice.value ? (currentDevice.value.remark || currentDevice.value.displayName) : "等待移动设备连接");
 const currentDeviceIcon = computed(() => currentDevice.value ? "solar:smartphone-bold-duotone" : "solar:devices-bold-duotone");
+const applyTargetDevice = computed(() => trustedDevices.value.find((device) => device.deviceId === applyTargetDeviceId.value) ?? trustedDevices.value[0] ?? null);
+const componentBindingOptions = computed(() => [
+  { value: null, label: "不绑定组件" },
+  ...workspace.components.map((component) => ({ value: component.id, label: component.name })),
+]);
+const availableSchemePageOptions = computed(() => workspace.pages
+  .filter((page) => !selectedScheme.value?.pageIds.includes(page.id))
+  .map((page) => ({ value: page.id, label: page.name })));
+const selectedSchemePageOptions = computed(() => (selectedScheme.value?.pageIds ?? []).map((pageId) => ({
+  value: pageId,
+  label: workspace.pages.find((page) => page.id === pageId)?.name ?? pageId,
+})));
+const capabilitySelectOptions = computed(() => permissionRows.value.map((capability) => ({
+  value: capability.id,
+  label: `${capability.name} · ${capability.description}`,
+  group: capability.categoryName,
+})));
 const localPairingHost = computed(() => pairing.value?.host ?? workspace.deviceStatus?.localIps?.[0] ?? "127.0.0.1");
 const pagePreviewRatioWidth = ref(21);
 const pagePreviewRatioHeight = ref(9);
@@ -319,6 +405,92 @@ const headerSubtitle = computed(() => {
   return "\u7ba1\u7406\u3001\u5bfc\u5165\u3001\u7f16\u8f91\u4e0e\u5e94\u7528\u90fd\u4ece\u8fd9\u91cc\u5f00\u59cb";
 });
 
+interface DesktopSettingsPayload {
+  startWithWindows: boolean;
+  gatewayPort: number;
+}
+
+function resolvedTheme(mode: ThemeMode) {
+  if (mode !== "system") return mode;
+  return systemThemeMedia?.matches || window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(mode: ThemeMode) {
+  const resolved = resolvedTheme(mode);
+  document.documentElement.classList.toggle("dark", resolved === "dark");
+  void setShellTheme(resolved);
+}
+
+function handleSystemThemeChange() {
+  if (theme.value === "system") applyTheme("system");
+}
+
+function handleWindowResize() {
+  applyDpiScaling(document.documentElement);
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.key !== "Escape") return;
+  if (pendingEditorLeave.value) cancelEditorLeave();
+  else if (pendingDelete.value) pendingDelete.value = null;
+  else if (showCodeSwitchDialog.value) showCodeSwitchDialog.value = false;
+  else if (showPermissionDialog.value) closePermissionDialog();
+  else if (showActionDesignerDialog.value) showActionDesignerDialog.value = false;
+  else if (showSchemeApplyDialog.value) showSchemeApplyDialog.value = false;
+  else if (showDeviceDialog.value) showDeviceDialog.value = false;
+  else if (showResourcePicker.value) showResourcePicker.value = false;
+  else return;
+  event.preventDefault();
+}
+
+async function loadDesktopSettings() {
+  const response = await sendShell<DesktopSettingsPayload>("settings.get");
+  if (!response.ok || !response.payload) return;
+  enableStartup.value = response.payload.startWithWindows;
+  connectionPort.value = response.payload.gatewayPort;
+  savedConnectionPort.value = response.payload.gatewayPort;
+}
+
+async function persistDesktopSettings(startWithWindows: boolean, gatewayPort: number) {
+  const normalizedPort = Math.round(Number(gatewayPort));
+  if (!Number.isFinite(normalizedPort) || normalizedPort < 1024 || normalizedPort > 65535) {
+    announceToast("监听端口必须在 1024 到 65535 之间");
+    return false;
+  }
+  if (savingSettings.value) return false;
+  savingSettings.value = true;
+  try {
+    const response = await sendShell<DesktopSettingsPayload>("settings.update", { startWithWindows, gatewayPort: normalizedPort });
+    if (!response.ok || !response.payload) {
+      announceToast(response.message ?? "设置保存失败");
+      return false;
+    }
+    enableStartup.value = response.payload.startWithWindows;
+    connectionPort.value = response.payload.gatewayPort;
+    savedConnectionPort.value = response.payload.gatewayPort;
+    await refreshDeviceConnectivity();
+    announceToast("设置已保存");
+    return true;
+  } finally {
+    savingSettings.value = false;
+  }
+}
+
+async function toggleStartupSetting() {
+  await persistDesktopSettings(!enableStartup.value, savedConnectionPort.value);
+}
+
+async function saveConnectionSettings() {
+  const saved = await persistDesktopSettings(enableStartup.value, connectionPort.value);
+  if (!saved) connectionPort.value = savedConnectionPort.value;
+}
+
+function setLanguage(next: string) {
+  if (next !== "zh-CN") return;
+  language.value = next;
+  window.localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
+}
+
 const editorNameConflict = computed(() => {
   if (activeView.value === "component" && componentRoute.value === "editor" && selectedComponent.value) {
     return findNameConflict("component", selectedComponent.value.id, selectedComponent.value.name);
@@ -334,9 +506,13 @@ const editorNameConflict = computed(() => {
 
 onMounted(async () => {
   applyDpiScaling(document.documentElement);
-  window.addEventListener("resize", () => applyDpiScaling(document.documentElement));
+  window.addEventListener("resize", handleWindowResize);
+  window.addEventListener("keydown", handleGlobalKeydown);
+  systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+  systemThemeMedia.addEventListener("change", handleSystemThemeChange);
   setTheme(theme.value);
   await loadWorkspace();
+  await loadDesktopSettings();
   deviceRefreshTimer = window.setInterval(() => {
     void refreshDeviceConnectivity();
   }, 2000);
@@ -347,6 +523,11 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (deviceRefreshTimer) window.clearInterval(deviceRefreshTimer);
+  window.removeEventListener("resize", handleWindowResize);
+  window.removeEventListener("keydown", handleGlobalKeydown);
+  systemThemeMedia?.removeEventListener("change", handleSystemThemeChange);
+  systemThemeMedia = null;
+  pagePreviewResizeObserver?.disconnect();
 });
 
 // 页面预览舞台出现或变化时，重新绑定尺寸观察器。
@@ -474,6 +655,12 @@ function ensureUniqueDraftName(baseName: string) {
 }
 
 function ensureEditorNameAvailable() {
+  const current = activeView.value === "component" ? selectedComponent.value : activeView.value === "page" ? selectedPage.value : selectedScheme.value;
+  if (!current?.name.trim()) {
+    announceToast("名称不能为空");
+    return false;
+  }
+  current.name = current.name.trim();
   if (!editorNameConflict.value) return true;
   announceToast(`名称冲突：已存在「${editorNameConflict.value.name}」`);
   return false;
@@ -574,6 +761,10 @@ function componentPreviewTextsForCell(componentId?: string | null) {
   return componentPreviewForCell(componentId).config?.texts ?? [];
 }
 
+function componentPreviewVideoForCell(componentId?: string | null) {
+  return visualVideoSource(componentPreviewForCell(componentId).config);
+}
+
 function navIcon(item: (typeof navItems)[number]) {
   return activeView.value === item.key ? item.icon.replace("-bold-duotone", "-bold") : item.icon;
 }
@@ -593,9 +784,21 @@ function openViewNow(view: ViewKey) {
   rememberEditorSavedSnapshot();
 }
 
+function stableSnapshot(value: unknown): string {
+  const normalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (!entry || typeof entry !== "object") return entry;
+    return Object.fromEntries(Object.entries(entry as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, normalize(item)]));
+  };
+  return JSON.stringify(normalize(value));
+}
+
 function editorSnapshot() {
   if (activeView.value === "component" && componentRoute.value === "editor" && selectedComponent.value) {
-    return JSON.stringify({
+    return stableSnapshot({
       component: selectedComponent.value,
       visualConfig: visualConfig.value,
       files: codeFileDrafts.value,
@@ -604,10 +807,10 @@ function editorSnapshot() {
   }
   if (activeView.value === "page" && pageRoute.value === "editor" && selectedPage.value) {
     ensurePageGridCells(selectedPage.value);
-    return JSON.stringify(selectedPage.value);
+    return stableSnapshot(selectedPage.value);
   }
   if (activeView.value === "scheme" && schemeRoute.value === "editor" && selectedScheme.value) {
-    return JSON.stringify(selectedScheme.value);
+    return stableSnapshot(selectedScheme.value);
   }
   return "";
 }
@@ -616,14 +819,61 @@ function rememberEditorSavedSnapshot() {
   editorSavedSnapshot.value = editorSnapshot();
 }
 
+function restoreEditorSavedSnapshot() {
+  if (!editorSavedSnapshot.value) return true;
+  try {
+    const saved = JSON.parse(editorSavedSnapshot.value) as {
+      component?: ComponentDefinition;
+      visualConfig?: VisualConfig;
+      files?: Record<string, string>;
+      mode?: "visual" | "code";
+      page?: never;
+      id?: string;
+    } & Partial<PageDefinition> & Partial<SchemeDefinition>;
+
+    // “不保存”必须恢复编辑器进入时的完整数据，不能只关闭弹窗后继续保留内存改动。
+    if (activeView.value === "component" && componentRoute.value === "editor" && saved.component) {
+      const index = workspace.components.findIndex((item) => item.id === saved.component?.id);
+      if (index >= 0) workspace.components[index] = saved.component;
+      if (saved.visualConfig) visualConfig.value = saved.visualConfig;
+      if (saved.files) codeFileDrafts.value = saved.files;
+      componentEditorMode.value = saved.mode === "code" ? "code" : "visual";
+      if (!codeFileDrafts.value[selectedCodeFile.value]) {
+        selectedCodeFile.value = Object.keys(codeFileDrafts.value)[0] ?? "src/Component.vue";
+      }
+      componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value] ?? "";
+      return true;
+    }
+
+    if (activeView.value === "page" && pageRoute.value === "editor" && selectedPage.value) {
+      const index = workspace.pages.findIndex((item) => item.id === selectedPage.value?.id);
+      if (index >= 0) workspace.pages[index] = saved as PageDefinition;
+      ensurePageGridCells(selectedPage.value);
+      return true;
+    }
+
+    if (activeView.value === "scheme" && schemeRoute.value === "editor" && selectedScheme.value) {
+      const index = workspace.schemes.findIndex((item) => item.id === selectedScheme.value?.id);
+      if (index >= 0) workspace.schemes[index] = saved as SchemeDefinition;
+      return true;
+    }
+    return true;
+  } catch (error) {
+    console.error("restoreEditorSavedSnapshot failed", error);
+    announceToast("无法恢复上一次保存内容，请取消离开后重试");
+    return false;
+  }
+}
+
 function hasUnsavedEditorChanges() {
   return Boolean(editorSavedSnapshot.value) && editorSnapshot() !== editorSavedSnapshot.value;
 }
 
 async function saveCurrentEditor() {
-  if (activeView.value === "component") await saveComponent();
-  else if (activeView.value === "page") await savePage();
-  else if (activeView.value === "scheme") await saveScheme();
+  if (activeView.value === "component") return await saveComponent();
+  if (activeView.value === "page") return await savePage();
+  if (activeView.value === "scheme") return await saveScheme();
+  return false;
 }
 
 async function runWithEditorLeaveGuard(proceed: () => void | Promise<void>) {
@@ -637,10 +887,13 @@ async function runWithEditorLeaveGuard(proceed: () => void | Promise<void>) {
 async function confirmEditorLeave(saveBeforeLeave: boolean) {
   const pending = pendingEditorLeave.value;
   if (!pending) return;
-  pendingEditorLeave.value = null;
   if (saveBeforeLeave) {
-    await saveCurrentEditor();
+    const saved = await saveCurrentEditor();
+    if (!saved) return;
+  } else if (!restoreEditorSavedSnapshot()) {
+    return;
   }
+  pendingEditorLeave.value = null;
   await pending.proceed();
 }
 
@@ -654,9 +907,8 @@ function requestCloseWindow() {
 
 function setTheme(next: ThemeMode) {
   theme.value = next;
-  const resolved = next === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : next;
-  document.documentElement.classList.toggle("dark", resolved === "dark");
-  void setShellTheme(resolved);
+  window.localStorage.setItem(THEME_STORAGE_KEY, next);
+  applyTheme(next);
 }
 
 async function toggleMaximize() {
@@ -950,6 +1202,8 @@ async function createComponent() {
     componentVisualSection.value = "base";
     visualConfig.value = parseVisualConfig(codeFileDrafts.value["onedesk.visual.json"], component);
     componentCodeDraft.value = codeFileDrafts.value[selectedCodeFile.value] ?? generatedComponentCode(component, visualConfig.value);
+    await nextTick();
+    rememberEditorSavedSnapshot();
     announceToast("\u7ec4\u4ef6\u5df2\u521b\u5efa");
   } catch (error) {
     console.error("createComponent failed", error);
@@ -977,12 +1231,17 @@ async function createPage() {
   };
   ensurePageGridCells(page);
   const response = await sendShell<PageDefinition>("workspace.savePage", page);
-  announceToast(response.ok ? "\u9875\u9762\u5df2\u521b\u5efa" : response.message ?? "\u9875\u9762\u521b\u5efa\u5931\u8d25");
+  if (!response.ok) {
+    announceToast(response.message ?? "\u9875\u9762\u521b\u5efa\u5931\u8d25");
+    return;
+  }
   await loadWorkspace({ preserveSelection: true, selectedPageId: id });
   workspace.selectedPageId = id;
   selectedCellId.value = page.cells[0]?.id ?? "";
   pageRoute.value = "editor";
+  await nextTick();
   rememberEditorSavedSnapshot();
+  announceToast("\u9875\u9762\u5df2\u521b\u5efa");
 }
 
 async function createScheme() {
@@ -1001,11 +1260,16 @@ async function createScheme() {
     pluginDependencies: [],
   };
   const response = await sendShell<SchemeDefinition>("workspace.saveScheme", scheme);
-  announceToast(response.ok ? "\u65b9\u6848\u5df2\u521b\u5efa" : response.message ?? "\u65b9\u6848\u521b\u5efa\u5931\u8d25");
+  if (!response.ok) {
+    announceToast(response.message ?? "\u65b9\u6848\u521b\u5efa\u5931\u8d25");
+    return;
+  }
   await loadWorkspace({ preserveSelection: true, selectedSchemeId: id });
   workspace.selectedSchemeId = id;
   schemeRoute.value = "editor";
+  await nextTick();
   rememberEditorSavedSnapshot();
+  announceToast("\u65b9\u6848\u5df2\u521b\u5efa");
 }
 
 async function exportComponent(component?: ComponentDefinition) {
@@ -1048,24 +1312,45 @@ function toggleImportCapability(capability: string) {
 }
 
 async function saveComponent() {
-  if (!selectedComponent.value) return;
-  if (!ensureEditorNameAvailable()) return;
-  if (componentEditorMode.value === "code") {
-    codeFileDrafts.value[selectedCodeFile.value] = componentCodeDraft.value;
-    selectedComponent.value.editMode = "code";
-    selectedComponent.value.visualConfigFile = null;
+  if (!selectedComponent.value || savingEditor.value) return false;
+  if (!ensureEditorNameAvailable()) return false;
+  savingEditor.value = true;
+  try {
+    if (componentEditorMode.value === "code") {
+      codeFileDrafts.value[selectedCodeFile.value] = componentCodeDraft.value;
+      selectedComponent.value.editMode = "code";
+      selectedComponent.value.visualConfigFile = null;
+    } else {
+      selectedComponent.value.editMode = "visual";
+      selectedComponent.value.visualConfigFile = "onedesk.visual.json";
+      codeFileDrafts.value["onedesk.visual.json"] = JSON.stringify(visualConfig.value, null, 2);
+    }
     codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
-  } else {
-    codeFileDrafts.value["onedesk.visual.json"] = JSON.stringify(visualConfig.value, null, 2);
-    codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
-    selectedComponent.value.editMode = "visual";
-    selectedComponent.value.visualConfigFile = "onedesk.visual.json";
+
+    const componentId = selectedComponent.value.id;
+    const response = await sendShell<ComponentDefinition>("workspace.saveComponent", selectedComponent.value);
+    if (!response.ok) {
+      announceToast(response.message ?? "组件保存失败");
+      return false;
+    }
+    const fileResponse = await sendShell<Record<string, string>>("workspace.saveComponentFiles", { id: componentId, files: codeFileDrafts.value });
+    if (!fileResponse.ok) {
+      announceToast(fileResponse.message ?? "组件代码文件保存失败");
+      return false;
+    }
+
+    await loadWorkspace({ preserveSelection: true, selectedComponentId: componentId });
+    await nextTick();
+    rememberEditorSavedSnapshot();
+    announceToast("组件与代码文件已保存");
+    return true;
+  } catch (error) {
+    console.error("saveComponent failed", error);
+    announceToast("组件保存失败");
+    return false;
+  } finally {
+    savingEditor.value = false;
   }
-  const response = await sendShell<ComponentDefinition>("workspace.saveComponent", selectedComponent.value);
-  const fileResponse = await sendShell<Record<string, string>>("workspace.saveComponentFiles", { id: selectedComponent.value.id, files: codeFileDrafts.value });
-  announceToast(response.ok && fileResponse.ok ? "组件与代码文件已保存" : response.message ?? fileResponse.message ?? "组件保存失败");
-  await loadWorkspace({ preserveSelection: true, selectedComponentId: selectedComponent.value.id });
-  rememberEditorSavedSnapshot();
 }
 
 function addComponentAction() {
@@ -1127,6 +1412,15 @@ function removeActionDraftInvocation(index: number) {
 
 async function saveActionDesigner() {
   if (!selectedComponent.value || !actionDraft.value || !actionDraftInvocation.value) return;
+  actionDraft.value.name = actionDraft.value.name.trim();
+  if (!actionDraft.value.name) {
+    announceToast("动作名称不能为空");
+    return;
+  }
+  if (actionDraft.value.invocations.some((invocation) => !invocation.targetDeviceId.trim() || !invocation.capability.trim())) {
+    announceToast("每一步动作都必须填写目标设备 ID 和 JSAPI 能力");
+    return;
+  }
   const duplicated = selectedComponentActions.value.some((item) => item.id !== actionDraft.value?.id && item.trigger.id === actionDraft.value?.trigger.id);
   if (duplicated) {
     announceToast("\u540c\u4e00\u7ec4\u4ef6\u5185\u89e6\u53d1\u5fc5\u987b\u552f\u4e00");
@@ -1149,8 +1443,8 @@ async function saveActionDesigner() {
   if (!selectedComponent.value.actionIds.includes(actionDraft.value.id)) {
     selectedComponent.value.actionIds = [...selectedComponent.value.actionIds, actionDraft.value.id];
   }
-  showActionDesignerDialog.value = false;
-  await saveComponent();
+  const componentSaved = await saveComponent();
+  if (componentSaved) showActionDesignerDialog.value = false;
 }
 
 function changeActionTrigger(action: ActionDefinition, triggerId: string) {
@@ -1383,22 +1677,77 @@ function handlePageGridChanged() {
 }
 
 async function savePage() {
-  if (!selectedPage.value) return;
-  if (!ensureEditorNameAvailable()) return;
-  ensurePageGridCells(selectedPage.value);
-  const response = await sendShell<PageDefinition>("workspace.savePage", selectedPage.value);
-  announceToast(response.ok ? "页面已保存" : response.message ?? "页面保存失败");
-  await loadWorkspace({ preserveSelection: true, selectedPageId: selectedPage.value.id });
-  rememberEditorSavedSnapshot();
+  if (!selectedPage.value || savingEditor.value) return false;
+  if (!ensureEditorNameAvailable()) return false;
+  savingEditor.value = true;
+  try {
+    ensurePageGridCells(selectedPage.value);
+    const pageId = selectedPage.value.id;
+    const response = await sendShell<PageDefinition>("workspace.savePage", selectedPage.value);
+    if (!response.ok) {
+      announceToast(response.message ?? "页面保存失败");
+      return false;
+    }
+    await loadWorkspace({ preserveSelection: true, selectedPageId: pageId });
+    await nextTick();
+    rememberEditorSavedSnapshot();
+    announceToast("页面已保存");
+    return true;
+  } catch (error) {
+    console.error("savePage failed", error);
+    announceToast("页面保存失败");
+    return false;
+  } finally {
+    savingEditor.value = false;
+  }
 }
 
 async function saveScheme() {
+  if (!selectedScheme.value || savingEditor.value) return false;
+  if (!ensureEditorNameAvailable()) return false;
+  savingEditor.value = true;
+  try {
+    const schemeId = selectedScheme.value.id;
+    const response = await sendShell<SchemeDefinition>("workspace.saveScheme", selectedScheme.value);
+    if (!response.ok) {
+      announceToast(response.message ?? "方案保存失败");
+      return false;
+    }
+    await loadWorkspace({ preserveSelection: true, selectedSchemeId: schemeId });
+    await nextTick();
+    rememberEditorSavedSnapshot();
+    announceToast("方案已保存");
+    return true;
+  } catch (error) {
+    console.error("saveScheme failed", error);
+    announceToast("方案保存失败");
+    return false;
+  } finally {
+    savingEditor.value = false;
+  }
+}
+
+function openSchemeApplyDialog() {
   if (!selectedScheme.value) return;
-  if (!ensureEditorNameAvailable()) return;
-  const response = await sendShell<SchemeDefinition>("workspace.saveScheme", selectedScheme.value);
-  announceToast(response.ok ? "方案已保存" : response.message ?? "方案保存失败");
-  await loadWorkspace({ preserveSelection: true, selectedSchemeId: selectedScheme.value.id });
-  rememberEditorSavedSnapshot();
+  applyTargetDeviceId.value = currentDevice.value?.deviceId ?? trustedDevices.value[0]?.deviceId ?? "";
+  showSchemeApplyDialog.value = true;
+}
+
+function isDeviceOnline(deviceId?: string | null) {
+  if (!deviceId) return false;
+  return Boolean(workspace.gatewayStatus?.peers?.some((peer) => peer.deviceId === deviceId && peer.online));
+}
+
+async function confirmApplySchemeToDevice() {
+  if (!selectedScheme.value || !applyTargetDevice.value) {
+    announceToast("请先选择要应用的移动设备");
+    return;
+  }
+  const target = applyTargetDevice.value;
+  await applyScheme(selectedScheme.value.id, target.deviceId);
+  showSchemeApplyDialog.value = false;
+  await refreshDeviceConnectivity();
+  announceToast(isDeviceOnline(target.deviceId) ? "方案已应用，在线设备将自动刷新" : "方案已记录，设备下次连接时会自动推送");
 }
 
 function addPageToScheme(pageId: string) {
@@ -1422,11 +1771,10 @@ function moveSchemePage(pageId: string, direction: -1 | 1) {
   selectedScheme.value.pageIds = pages;
 }
 
-function handleAddSchemePage(event: Event) {
-  const select = event.target instanceof HTMLSelectElement ? event.target : null;
-  if (!select) return;
-  addPageToScheme(select.value);
-  select.value = "";
+function handleAddSchemePage(pageId: string) {
+  if (!pageId) return;
+  addPageToScheme(pageId);
+  schemePageToAddId.value = "";
 }
 
 function beginSchemePageDrag(index: number) {
@@ -1451,7 +1799,7 @@ function addSchemeEdge() {
     {
       fromPageId,
       toPageId,
-      trigger: { id: `edge-swipe-${Date.now()}`, category: "touch.standard", displayName: "涓夋寚妯粦", fingerCount: 3 },
+      trigger: { id: `edge-swipe-${Date.now()}`, category: "touch.standard", displayName: "三指横滑", fingerCount: 3 },
       animation: "fade",
     },
   ];
@@ -1501,6 +1849,22 @@ async function confirmPermissionDialog() {
   await loadWorkspace();
 }
 
+function changePermissionSource(value: string) {
+  const splitAt = value.indexOf(":");
+  if (splitAt <= 0) return;
+  const kind = value.slice(0, splitAt);
+  if (kind !== "component" && kind !== "plugin") return;
+  permissionSourceKind.value = kind;
+  permissionSourceId.value = value.slice(splitAt + 1);
+}
+
+function closePermissionDialog() {
+  pendingImportKind.value = null;
+  pendingPluginImport.value = false;
+  pendingInspection.value = null;
+  showPermissionDialog.value = false;
+}
+
 async function renameDevice(device: TrustedPairingCredential) {
   const response = await sendShell<TrustedPairingCredential>("device.rename", { deviceId: device.deviceId, remark: deviceRemarkDraft.value[device.deviceId] ?? "" });
   workspace.toast = response.ok ? "设备备注已保存" : response.message ?? "设备备注保存失败";
@@ -1522,7 +1886,6 @@ async function importPlugin() {
 }
 
 async function openDeviceDialog(generateCode = false) {
-  showDeviceMenu.value = false;
   showDeviceDialog.value = true;
   if (!pairing.value || generateCode) {
     const response = await sendShell<{ code: string; qrPayload: string; expiresInSeconds: number; host?: string; port?: number; localIps?: string[] }>("pairing.generate", { port: connectionPort.value });
@@ -1569,9 +1932,14 @@ function runQuickStart(item: { label: string }) {
 }
 
 function leaveEditor() {
+  void runWithEditorLeaveGuard(() => leaveEditorNow());
+}
+
+function leaveEditorNow() {
   if (activeView.value === "component") componentRoute.value = "manager";
   else if (activeView.value === "page") pageRoute.value = "manager";
   else if (activeView.value === "scheme") schemeRoute.value = "manager";
+  rememberEditorSavedSnapshot();
 }
 
 async function savePluginSettings(plugin?: PluginManifest | null) {
@@ -1631,22 +1999,17 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               <button v-if="activeView === 'component'" class="header-surface-button" @click="exportComponent(selectedComponent)">导出</button>
               <button v-if="activeView === 'page'" class="header-surface-button" @click="exportPage(selectedPage)">导出</button>
               <button v-if="activeView === 'scheme'" class="header-surface-button" @click="exportScheme(selectedScheme)">导出</button>
-              <button class="header-primary-button" @click="activeView === 'component' ? saveComponent() : activeView === 'page' ? savePage() : saveScheme()">保存</button>
-              <button v-if="activeView === 'scheme'" class="header-surface-button" @click="selectedScheme && applyScheme(selectedScheme.id, selectedDeviceId || undefined)">应用</button>
+              <button class="header-primary-button" :disabled="savingEditor" @click="activeView === 'component' ? saveComponent() : activeView === 'page' ? savePage() : saveScheme()">{{ savingEditor ? '保存中' : '保存' }}</button>
+              <button v-if="activeView === 'scheme'" class="header-surface-button" @click="openSchemeApplyDialog">应用</button>
             </div>
             <div v-if="activeView === 'plugin' || activeView === 'permission'" class="flex items-center gap-2">
               <button v-if="activeView === 'plugin'" class="header-surface-button" @click="importPlugin">导入插件</button>
             </div>
             <div class="device-menu relative">
-              <button class="header-device-button" title="设备" @click="showDeviceMenu = !showDeviceMenu">
-                <Icon :icon="currentDeviceIcon" class="size-4 text-sky-500" />
-                <span class="truncate">{{ currentDeviceName }}</span>
+              <button class="header-device-button" title="设备管理" @click="openDeviceDialog(true)">
+                <Icon icon="solar:devices-bold-duotone" class="size-4 text-sky-500" />
+                <span class="truncate">设备管理</span>
               </button>
-              <div v-if="showDeviceMenu" class="absolute right-0 top-11 z-30 w-[260px] rounded-[22px] bg-white p-2 shadow-2xl shadow-slate-950/12 dark:bg-slate-950">
-                <button class="menu-row" @click="openDeviceDialog(true)"><Icon icon="solar:devices-bold-duotone" class="size-5 text-sky-500" />设备管理</button>
-                <div class="my-1 h-px bg-slate-100 dark:bg-slate-800"></div>
-                <p class="px-3 py-2 text-[11px] leading-5 text-slate-500">桌面端显示本机局域网 IP 和验证码，由手机端主动连接。</p>
-              </div>
             </div>
 
             <div class="group relative flex size-8 items-start justify-center overflow-visible rounded-full">
@@ -1690,7 +2053,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             </div>
 
             <div class="soft-card p-5">
-              <h2 class="text-[16px] font-semibold">蹇嵎鎿嶄綔</h2>
+              <h2 class="text-[16px] font-semibold">快捷操作</h2>
               <div class="mt-4 grid gap-3">
                 <button v-for="item in quickActions" :key="item.label" class="soft-row group" @click="item.label.includes('创建') ? createScheme() : item.label.includes('导入') ? importWorkspace('Scheme') : openDeviceDialog(true)">
                   <span class="grid size-8 place-items-center rounded-xl dark:bg-slate-800"><Icon :icon="item.icon" :class="['size-5', item.color]" /></span>
@@ -1779,7 +2142,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <section data-visual-section="base">
                   <div class="editor-section-head"><h3>基础样式</h3><p>控制组件容器布局、圆角和边距。</p></div>
                   <div class="editor-form-row">
-                    <label class="field-label editor-field-auto"><span>布局</span><select v-model="visualConfig.base.layout" class="field"><option value="center">居中</option><option value="left">靠左</option><option value="right">靠右</option><option value="bottom">靠下</option></select></label>
+                    <label class="field-label editor-field-auto"><span>布局</span><UiSelect v-model="visualConfig.base.layout" :options="layoutOptions" aria-label="组件布局" /></label>
                     <label class="field-label editor-field-num"><span>圆角</span><input v-model.number="visualConfig.base.borderRadius" type="number" min="0" class="field" /></label>
                     <label class="field-label editor-field-num"><span>边距</span><input v-model.number="visualConfig.base.margin" type="number" min="0" class="field" /></label>
                   </div>
@@ -1787,7 +2150,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <section data-visual-section="background">
                   <div class="editor-section-head"><h3>背景与媒体</h3><p>按背景类型显示对应的颜色或文件选择器。</p></div>
                   <div class="editor-form-row">
-                    <label class="field-label editor-field-grow"><span>背景类型</span><select v-model="visualConfig.background.kind" class="field"><option value="gradient">渐变背景</option><option value="solid">纯色背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></label>
+                    <label class="field-label editor-field-grow"><span>背景类型</span><UiSelect v-model="visualConfig.background.kind" :options="backgroundKindOptions" aria-label="组件背景类型" /></label>
                     <template v-if="visualConfig.background.kind === 'solid'">
                       <label class="field-label editor-field-auto"><span>纯色</span><input v-model="visualConfig.background.value" type="color" class="field editor-color-input" /></label>
                     </template>
@@ -1801,8 +2164,8 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     </template>
                   </div>
                   <div class="editor-form-row mt-2">
-                    <label class="field-label editor-field-auto"><span>图片尺寸</span><select v-model="visualConfig.image.size" class="field"><option value="cover">填充覆盖</option><option value="contain">完整显示</option></select></label>
-                    <label class="field-label editor-field-auto"><span>图片位置</span><select v-model="visualConfig.image.position" class="field"><option value="center">居中</option><option value="left">靠左</option><option value="right">靠右</option><option value="top">靠上</option><option value="bottom">靠下</option></select></label>
+                    <label class="field-label editor-field-auto"><span>图片尺寸</span><UiSelect v-model="visualConfig.image.size" :options="imageSizeOptions" aria-label="图片尺寸" /></label>
+                    <label class="field-label editor-field-auto"><span>图片位置</span><UiSelect v-model="visualConfig.image.position" :options="positionOptions" aria-label="图片位置" /></label>
                     <label class="field-label editor-field-num"><span>图片边距</span><input v-model.number="visualConfig.image.margin" type="number" min="0" class="field" /></label>
                   </div>
                 </section>
@@ -1818,7 +2181,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                       <div class="editor-form-row mt-2">
                         <label class="field-label editor-field-num"><span>字号</span><input v-model.number="text.fontSize" type="number" min="8" class="field" /></label>
                         <label class="field-label editor-field-auto"><span>颜色</span><input v-model="text.color" type="color" class="field editor-color-input" /></label>
-                        <label class="field-label editor-field-grow"><span>位置</span><select v-model="text.position" class="field"><option value="center">居中</option><option value="left">靠左</option><option value="right">靠右</option><option value="top">靠上</option><option value="bottom">靠下</option></select></label>
+                        <label class="field-label editor-field-grow"><span>位置</span><UiSelect v-model="text.position" :options="positionOptions" aria-label="文字位置" /></label>
                       </div>
                     </div>
                   </div>
@@ -1826,8 +2189,8 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <section data-visual-section="state">
                   <div class="editor-section-head"><h3>锁定与按下状态</h3><p>为移动端按钮配置状态反馈。</p></div>
                   <div class="editor-form-row">
-                    <label class="field-label editor-field-grow"><span>按下效果</span><select v-model="visualConfig.states.pressed" class="field"><option value="scale-95">按下缩小</option><option value="brightness-110">按下高亮</option><option value="none">无</option></select></label>
-                    <label class="field-label editor-field-grow"><span>锁定效果</span><select v-model="visualConfig.states.locked" class="field"><option value="opacity-60">降低透明度</option><option value="grayscale">增加灰度蒙层</option><option value="none">无</option></select></label>
+                    <label class="field-label editor-field-grow"><span>按下效果</span><UiSelect v-model="visualConfig.states.pressed" :options="pressedStateOptions" aria-label="按下效果" /></label>
+                    <label class="field-label editor-field-grow"><span>锁定效果</span><UiSelect v-model="visualConfig.states.locked" :options="lockedStateOptions" aria-label="锁定效果" /></label>
                   </div>
                 </section>
                 <section data-visual-section="action">
@@ -1949,8 +2312,8 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                   <div class="editor-section-grid">
                     <label v-if="selectedPage" class="field-label"><span>行数</span><input v-model.number="selectedPage.rows" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
                     <label v-if="selectedPage" class="field-label"><span>列数</span><input v-model.number="selectedPage.columns" type="number" min="1" max="12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
-                    <label v-if="selectedPage" class="field-label"><span>水平对齐</span><select v-model="selectedPage.gridHorizontalAlign" class="field"><option value="left">靠左</option><option value="center">居中</option><option value="right">靠右</option></select></label>
-                    <label v-if="selectedPage" class="field-label"><span>垂直对齐</span><select v-model="selectedPage.gridVerticalAlign" class="field"><option value="top">靠上</option><option value="center">居中</option><option value="bottom">靠下</option></select></label>
+                    <label v-if="selectedPage" class="field-label"><span>水平对齐</span><UiSelect v-model="selectedPage.gridHorizontalAlign" :options="horizontalAlignOptions" aria-label="矩阵水平对齐" /></label>
+                    <label v-if="selectedPage" class="field-label"><span>垂直对齐</span><UiSelect v-model="selectedPage.gridVerticalAlign" :options="verticalAlignOptions" aria-label="矩阵垂直对齐" /></label>
                     <label v-if="selectedPage" class="field-label"><span>页边距</span><input v-model.number="selectedPage.spacing.padding" type="number" min="0" class="field" /></label>
                     <label v-if="selectedPage" class="field-label"><span>行间距</span><input v-model.number="selectedPage.spacing.rowGap" type="number" min="0" class="field" /></label>
                     <label v-if="selectedPage" class="field-label"><span>列间距</span><input v-model.number="selectedPage.spacing.columnGap" type="number" min="0" class="field" /></label>
@@ -1963,7 +2326,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     <p>颜色直接保存；图片和视频必须从资源管理器选择。</p>
                   </div>
                   <div class="editor-section-grid">
-                    <label v-if="selectedPage" class="field-label"><span>背景类型</span><select v-model="selectedPage.backgroundKind" class="field"><option value="solid">纯色背景</option><option value="gradient">渐变背景</option><option value="image">图片背景</option><option value="video">视频背景</option></select></label>
+                    <label v-if="selectedPage" class="field-label"><span>背景类型</span><UiSelect v-model="selectedPage.backgroundKind" :options="backgroundKindOptions" aria-label="页面背景类型" /></label>
                     <template v-if="selectedPage?.backgroundKind === 'solid'">
                       <label class="field-label"><span>背景颜色</span><input v-model="selectedPage.backgroundValue" type="color" class="field h-10 p-1" /></label>
                     </template>
@@ -1986,11 +2349,11 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                   <div class="editor-section-grid">
                     <label class="field-label"><span>跨行</span><input v-model.number="selectedCell.rowSpan" type="number" min="1" :max="selectedPage?.rows ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
                     <label class="field-label"><span>跨列</span><input v-model.number="selectedCell.columnSpan" type="number" min="1" :max="selectedPage?.columns ?? 12" class="field" @input="handlePageGridChanged" @change="handlePageGridChanged" /></label>
-                    <label class="field-label"><span>绑定组件</span><select v-model="selectedCell.componentId" class="field"><option :value="null">不绑定组件</option><option v-for="component in workspace.components" :key="component.id" :value="component.id">{{ component.name }}</option></select></label>
+                    <label class="field-label"><span>绑定组件</span><UiSelect v-model="selectedCell.componentId" :options="componentBindingOptions" aria-label="绑定组件" /></label>
                     <label class="field-label"><span>圆角</span><input v-model.number="selectedCell.style.borderRadius" type="number" min="0" class="field" /></label>
                     <label class="field-label"><span>轮廓颜色</span><input v-model="selectedCell.style.outlineColor" type="color" class="field h-10 p-1" /></label>
                     <label class="field-label"><span>轮廓宽度</span><input v-model.number="selectedCell.style.outlineWidth" type="number" min="0" class="field" /></label>
-                    <label class="field-label"><span>轮廓样式</span><select v-model="selectedCell.style.outlineStyle" class="field"><option value="solid">实线</option><option value="dashed">虚线</option><option value="dotted">点线</option></select></label>
+                    <label class="field-label"><span>轮廓样式</span><UiSelect v-model="selectedCell.style.outlineStyle" :options="outlineStyleOptions" aria-label="格子轮廓样式" /></label>
                   </div>
                 </div>
                 <p class="mt-4 text-[11px] leading-5 text-slate-500">预览比例来自当前选择移动设备：{{ currentDeviceName }}</p>
@@ -2024,6 +2387,15 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     >
                       <template v-if="pageLivePreview && cell.componentId">
                         <span class="component-live-tile" :style="componentTileStyle(componentPreviewForCell(cell.componentId).config)">
+                          <video
+                            v-if="componentPreviewVideoForCell(cell.componentId)"
+                            class="absolute inset-0 size-full object-cover"
+                            :src="componentPreviewVideoForCell(cell.componentId)"
+                            autoplay
+                            muted
+                            loop
+                            playsinline
+                          ></video>
                           <template v-for="(text, ti) in componentPreviewTextsForCell(cell.componentId)" :key="text.id">
                             <span class="absolute" :style="textPositionStyle(text.position, ti, componentPreviewTextsForCell(cell.componentId).length || 1, text.x, text.y)"><span :style="{ fontSize: `${text.fontSize ?? 12}px`, color: text.color ?? '#ffffff' }">{{ text.content || componentPreviewForCell(cell.componentId).component?.name }}</span></span>
                           </template>
@@ -2061,10 +2433,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             <div class="grid h-full min-h-0 grid-cols-[300px_1fr] gap-5">
               <aside class="soft-card scheme-settings-panel min-h-0 overflow-hidden" data-no-window-drag>
                 <div class="scrollable h-full overflow-auto p-4" data-no-window-drag>
-                <select class="field mt-1 text-[12px]" @change="handleAddSchemePage">
-                  <option value="">添加页面到方案</option>
-                  <option v-for="page in workspace.pages.filter((page) => !selectedScheme?.pageIds.includes(page.id))" :key="page.id" :value="page.id">{{ page.name }}</option>
-                </select>
+                <UiSelect v-model="schemePageToAddId" class="mt-1 text-[12px]" :options="availableSchemePageOptions" placeholder="添加页面到方案" aria-label="添加页面到方案" @change="handleAddSchemePage" />
 
                 <div class="mt-4 grid gap-2 text-[12px]">
                   <div v-for="pageId in selectedScheme?.pageIds" :key="pageId" class="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800">
@@ -2080,32 +2449,16 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                 <div class="mt-4 grid gap-2 text-[12px]">
                   <h3 class="text-[13px] font-semibold">全局切换</h3>
                   <label class="field-label">上一页触发
-                    <select v-if="selectedScheme" class="field" :value="selectedScheme.globalPrevious.trigger.id" @change="changeSchemeGlobalTrigger('previous', ($event.target as HTMLSelectElement).value)">
-                      <optgroup v-for="group in triggerCatalog" :key="group.category" :label="group.label">
-                        <option v-for="trigger in group.triggers" :key="trigger.id" :value="trigger.id">{{ trigger.displayName }}</option>
-                      </optgroup>
-                    </select>
+                    <UiSelect v-if="selectedScheme" :model-value="selectedScheme.globalPrevious.trigger.id" :options="triggerSelectOptions" aria-label="上一页触发" @update:model-value="changeSchemeGlobalTrigger('previous', String($event))" />
                   </label>
                   <label class="field-label">上一页动画
-                    <select v-if="selectedScheme" v-model="selectedScheme.globalPrevious.animation" class="field">
-                      <option value="fade">渐入渐退</option>
-                      <option value="slide">滑动</option>
-                      <option value="none">无动画</option>
-                    </select>
+                    <UiSelect v-if="selectedScheme" v-model="selectedScheme.globalPrevious.animation" :options="animationOptions" aria-label="上一页动画" />
                   </label>
                   <label class="field-label">下一页触发
-                    <select v-if="selectedScheme" class="field" :value="selectedScheme.globalNext.trigger.id" @change="changeSchemeGlobalTrigger('next', ($event.target as HTMLSelectElement).value)">
-                      <optgroup v-for="group in triggerCatalog" :key="group.category" :label="group.label">
-                        <option v-for="trigger in group.triggers" :key="trigger.id" :value="trigger.id">{{ trigger.displayName }}</option>
-                      </optgroup>
-                    </select>
+                    <UiSelect v-if="selectedScheme" :model-value="selectedScheme.globalNext.trigger.id" :options="triggerSelectOptions" aria-label="下一页触发" @update:model-value="changeSchemeGlobalTrigger('next', String($event))" />
                   </label>
                   <label class="field-label">下一页动画
-                    <select v-if="selectedScheme" v-model="selectedScheme.globalNext.animation" class="field">
-                      <option value="fade">渐入渐退</option>
-                      <option value="slide">滑动</option>
-                      <option value="none">无动画</option>
-                    </select>
+                    <UiSelect v-if="selectedScheme" v-model="selectedScheme.globalNext.animation" :options="animationOptions" aria-label="下一页动画" />
                   </label>
                 </div>
 
@@ -2115,18 +2468,10 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     <button class="text-sky-600" @click="addSchemeEdge">新增边</button>
                   </div>
                   <div v-for="(edge, index) in selectedScheme?.edges" :key="`${edge.fromPageId}-${edge.toPageId}-${index}`" class="grid gap-2 rounded-xl bg-slate-50 p-2 dark:bg-slate-800">
-                    <select v-model="edge.fromPageId" class="field">
-                      <option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option>
-                    </select>
-                    <select v-model="edge.toPageId" class="field">
-                      <option v-for="pageId in selectedScheme?.pageIds" :key="pageId" :value="pageId">{{ workspace.pages.find((page) => page.id === pageId)?.name ?? pageId }}</option>
-                    </select>
+                    <UiSelect v-model="edge.fromPageId" :options="selectedSchemePageOptions" aria-label="跳转起始页面" />
+                    <UiSelect v-model="edge.toPageId" :options="selectedSchemePageOptions" aria-label="跳转目标页面" />
                     <input v-model="edge.trigger.displayName" class="field" />
-                    <select v-model="edge.animation" class="field">
-                      <option value="fade">渐入渐退</option>
-                      <option value="slide">滑动</option>
-                      <option value="none">无动画</option>
-                    </select>
+                    <UiSelect v-model="edge.animation" :options="animationOptions" aria-label="页面跳转动画" />
                     <button class="card-action danger" @click="removeSchemeEdge(index)">删除边</button>
                   </div>
                 </div>
@@ -2167,11 +2512,13 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
 <section v-else class="scrollable h-full overflow-auto" data-no-window-drag>
             <div v-if="activeView === 'plugin'" class="plugin-layout">
               <div class="soft-card scrollable grid content-start gap-3 overflow-auto p-4" data-no-window-drag>
-                <button v-for="plugin in workspace.plugins" :key="plugin.id" class="rounded-2xl bg-white px-4 py-3 text-left text-[13px] shadow-sm dark:bg-slate-900" :class="selectedPlugin?.id === plugin.id ? 'ring-2 ring-sky-400' : ''" @click="selectedPluginId = plugin.id">
-                  <div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="truncate font-semibold">{{ plugin.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ plugin.id }} · {{ plugin.version }}</p></div><span class="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-600 dark:bg-sky-950">已注册</span></div>
-                  <p class="mt-2 text-[12px] text-slate-500">{{ plugin.persistent ? '允许常驻后台' : '按需调用' }} · {{ plugin.permissions.length }} 权限</p>
-                  <span class="mt-3 inline-flex rounded-full bg-rose-50 px-3 py-1.5 text-[12px] font-medium text-rose-500 dark:bg-rose-950/40" @click.stop="requestDelete('plugin', plugin.id, plugin.name)">删除插件</span>
-                </button>
+                <article v-for="plugin in workspace.plugins" :key="plugin.id" class="rounded-2xl bg-white px-4 py-3 text-[13px] shadow-sm dark:bg-slate-900" :class="selectedPlugin?.id === plugin.id ? 'ring-2 ring-sky-400' : ''">
+                  <button class="w-full text-left" type="button" @click="selectedPluginId = plugin.id">
+                    <div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="truncate font-semibold">{{ plugin.name }}</p><p class="mt-1 text-[12px] text-slate-500">{{ plugin.id }} · {{ plugin.version }}</p></div><span class="rounded-full bg-sky-50 px-2 py-1 text-[11px] text-sky-600 dark:bg-sky-950">已注册</span></div>
+                    <p class="mt-2 text-[12px] text-slate-500">{{ plugin.persistent ? '允许常驻后台' : '按需调用' }} · {{ plugin.permissions.length }} 权限</p>
+                  </button>
+                  <button class="mt-3 inline-flex rounded-full bg-rose-50 px-3 py-1.5 text-[12px] font-medium text-rose-500 dark:bg-rose-950/40" type="button" @click="requestDelete('plugin', plugin.id, plugin.name)">删除插件</button>
+                </article>
                 <div v-if="!workspace.plugins.length" class="rounded-2xl bg-white px-4 py-8 text-center text-[13px] text-slate-500 shadow-sm dark:bg-slate-900">暂无插件。导入插件包后，OneDesk 会读取插件清单、显示权限并注册后端进程。</div>
               </div>
               <div class="soft-card p-4">
@@ -2211,27 +2558,28 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               </aside>
               <section class="soft-card scrollable overflow-auto p-4" data-no-window-drag>
                 <div v-if="settingsSection === 'general'" class="grid max-w-[560px] gap-3 text-[13px]">
-                  <label class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">
+                  <div class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950">
                     <span>
                       <span class="block font-semibold">开机启动</span>
                       <span class="mt-1 block text-[12px] text-slate-500">系统登录后自动启动 OneDesk 桌面端</span>
                     </span>
-                    <input v-model="enableStartup" type="checkbox" class="size-4 accent-sky-500" />
-                  </label>
-                  <label class="field-label">界面语言<input class="field" value="简体中文" disabled /></label>
-                  <label class="field-label">主题模式<input class="field" :value="theme === 'system' ? '跟随系统' : theme === 'dark' ? '深色' : '浅色'" disabled /></label>
+                    <button class="setting-switch" type="button" role="switch" :aria-checked="enableStartup" :disabled="savingSettings" :class="enableStartup ? 'setting-switch-on' : ''" @click="toggleStartupSetting"><span></span></button>
+                  </div>
+                  <label class="field-label">界面语言<UiSelect :model-value="language" :options="languageOptions" aria-label="界面语言" @update:model-value="setLanguage(String($event))" /></label>
+                  <label class="field-label">主题模式<UiSelect :model-value="theme" :options="themeOptions" aria-label="主题模式" @update:model-value="setTheme(String($event) as ThemeMode)" /></label>
                 </div>
                 <div v-else-if="settingsSection === 'connection'" class="grid max-w-[560px] gap-3 text-[13px]">
                   <label class="field-label">桌面监听端口<input v-model.number="connectionPort" type="number" min="1024" max="65535" class="field" /></label>
-                  <button class="w-fit rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="openDeviceDialog(true)">打开设备管理</button>
-                  <p class="text-[12px] text-slate-500">端口修改会影响移动端连接信息；当前网关状态仍以壳子返回值为准。</p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button class="header-primary-button" :disabled="savingSettings || connectionPort === savedConnectionPort" @click="saveConnectionSettings">{{ savingSettings ? '保存中' : '保存连接设置' }}</button>
+                    <button class="header-surface-button" @click="openDeviceDialog(true)">打开设备管理</button>
+                  </div>
+                  <p class="text-[12px] text-slate-500">保存后桌面网关会立即切换到新端口，移动端需要使用新端口重新连接。</p>
                 </div>
                 <div v-else-if="settingsSection === 'permission'" class="grid gap-2">
                   <div class="rounded-2xl bg-slate-50 px-4 py-3 text-[13px] dark:bg-slate-950">
                     <label class="field-label max-w-[420px]">授权对象
-                      <select class="field" :value="`${permissionSourceKind}:${permissionSourceId}`" @change="(() => { const value = ($event.target as HTMLSelectElement).value; const splitAt = value.indexOf(':'); const kind = value.slice(0, splitAt); const id = value.slice(splitAt + 1); permissionSourceKind = kind as 'component' | 'plugin'; permissionSourceId = id; })">
-                        <option v-for="option in permissionSourceOptions" :key="`${option.kind}:${option.id}`" :value="`${option.kind}:${option.id}`">{{ option.label }}</option>
-                      </select>
+                      <UiSelect :model-value="`${permissionSourceKind}:${permissionSourceId}`" :options="permissionSourceSelectOptions" placeholder="选择授权对象" aria-label="授权对象" @update:model-value="changePermissionSource(String($event))" />
                     </label>
                     <p class="mt-2 text-[12px] text-slate-500">当前：{{ permissionSourceLabel }} · {{ permissionSourceKey }} · 大类授权会覆盖全部小类，小类授权只开放单项能力。</p>
                   </div>
@@ -2272,7 +2620,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
                     <div v-if="!workspace.resources.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-950">暂无资源。点击添加资源导入图片或视频。</div>
                   </div>
                 </div>
-                <div v-else-if="settingsSection === 'plugins'" class="grid gap-3 text-[13px]"><p class="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">已安装插件：{{ workspace.plugins.length }} 个。插件导入、设置和权限仍在插件页面管理。</p><button class="w-fit rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="activeView = 'plugin'">前往插件</button></div>
+                <div v-else-if="settingsSection === 'plugins'" class="grid gap-3 text-[13px]"><p class="rounded-2xl bg-slate-50 px-4 py-3 dark:bg-slate-950">已安装插件：{{ workspace.plugins.length }} 个。插件导入、设置和权限仍在插件页面管理。</p><button class="w-fit rounded-full bg-sky-500 px-4 py-2 text-[12px] font-medium text-white" @click="openView('plugin')">前往插件</button></div>
                 <div v-else class="grid gap-2 text-[13px]"><div v-for="(log, index) in workspace.logs.slice(0, 20)" :key="index" class="rounded-2xl bg-slate-50 px-4 py-3 text-[12px] dark:bg-slate-950">{{ JSON.stringify(log) }}</div><p v-if="!workspace.logs.length" class="rounded-2xl bg-slate-50 px-4 py-3 text-slate-500 dark:bg-slate-950">暂无日志。</p></div>
               </section>
             </div>
@@ -2309,6 +2657,42 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             <span class="rounded-full bg-sky-50 px-3 py-1.5 text-[12px] font-medium text-sky-600 dark:bg-sky-950/50">选择</span>
           </button>
           <div v-if="!resourcePickerItems.length" class="rounded-2xl bg-slate-50 px-4 py-8 text-center text-[13px] text-slate-500 dark:bg-slate-900">暂无可用资源，请先添加{{ resourcePickerKind === 'video' ? '视频' : '图片' }}资源。</div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showSchemeApplyDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">
+      <div class="modal-panel w-full max-w-[560px] overflow-hidden rounded-[28px] bg-white p-5 shadow-2xl shadow-slate-950/24 dark:bg-slate-950">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 class="text-[16px] font-semibold">应用方案到设备</h3>
+            <p class="mt-1 text-[12px] text-slate-500">选择要应用的移动设备。在线设备会自动刷新，离线设备会在下次连接时自动推送。</p>
+          </div>
+          <button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showSchemeApplyDialog = false">
+            <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
+          </button>
+        </div>
+
+        <div class="mt-5 grid gap-2">
+          <button
+            v-for="device in trustedDevices"
+            :key="device.deviceId"
+            class="flex items-center justify-between rounded-2xl border px-4 py-3 text-left transition"
+            :class="applyTargetDeviceId === device.deviceId ? 'border-sky-500 bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-200' : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900'"
+            @click="applyTargetDeviceId = device.deviceId"
+          >
+            <span>
+              <span class="block text-[13px] font-semibold">{{ device.remark || device.displayName }}</span>
+              <span class="mt-1 block text-[11px] text-slate-500">{{ device.deviceId }}</span>
+            </span>
+            <span class="rounded-full px-2.5 py-1 text-[11px] font-medium" :class="isDeviceOnline(device.deviceId) ? 'bg-green-100 text-green-600 dark:bg-green-950/50 dark:text-green-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'">{{ isDeviceOnline(device.deviceId) ? '在线' : '离线' }}</span>
+          </button>
+          <div v-if="!trustedDevices.length" class="rounded-2xl bg-slate-50 p-5 text-center text-[13px] text-slate-500 dark:bg-slate-900">暂无已信任移动设备，请先在设备管理中生成验证码并完成连接。</div>
+        </div>
+
+        <div class="mt-5 flex justify-end gap-2">
+          <button class="header-surface-button" @click="showSchemeApplyDialog = false">取消</button>
+          <button class="header-primary-button" :disabled="!trustedDevices.length" @click="confirmApplySchemeToDevice">应用</button>
         </div>
       </div>
     </div>
@@ -2439,27 +2823,20 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
               <div class="editor-section-head"><h3>触发</h3><p>一个动作只能拥有一个触发。</p></div>
               <label class="field-label">
                 <span>触发方式</span>
-                <select class="field" :value="actionDraft.trigger.id" @change="changeActionDraftTrigger(($event.target as HTMLSelectElement).value)">
-                  <optgroup v-for="group in triggerCatalog" :key="group.category" :label="group.label">
-                    <option v-for="trigger in group.triggers" :key="trigger.id" :value="trigger.id">{{ trigger.displayName }}</option>
-                  </optgroup>
-                </select>
+                <UiSelect :model-value="actionDraft.trigger.id" :options="triggerSelectOptions" aria-label="动作触发方式" @update:model-value="changeActionDraftTrigger(String($event))" />
               </label>
             </section>
             <section v-for="(invocation, index) in actionDraft.invocations" :key="index" class="editor-section-card">
               <div class="editor-section-head editor-section-head-row"><div><h3>动作 {{ index + 1 }}</h3><p>执行内容为调用 JSAPI，可继续追加下一步动作。</p></div><button v-if="actionDraft.invocations.length > 1" class="editor-icon-button" type="button" @click="removeActionDraftInvocation(index)"><Icon icon="solar:trash-bin-trash-bold-duotone" class="size-[16px]" /></button></div>
               <div class="editor-form-row">
                 <label class="field-label editor-field-grow"><span>目标设备 ID</span><input v-model="invocation.targetDeviceId" class="field" placeholder="desktop 或设备 ID" /></label>
-                <label class="field-label editor-field-grow"><span>JSAPI 能力</span><input v-model="invocation.capability" class="field" list="action-capability-list" placeholder="notification.native" /></label>
+                <label class="field-label editor-field-grow"><span>JSAPI 能力</span><UiSelect v-model="invocation.capability" :options="capabilitySelectOptions" placeholder="选择 JSAPI 能力" aria-label="JSAPI 能力" /></label>
               </div>
               <label class="field-label mt-3"><span>参数 JSON</span><textarea v-model="actionDraftParametersText[index]" class="field min-h-[132px] resize-none font-mono text-[12px]" spellcheck="false"></textarea></label>
             </section>
             <button class="action-add-step-button action-add-step-button-wide" type="button" @click="addActionDraftInvocation">
               <Icon icon="solar:add-circle-bold-duotone" class="size-4" />增加下一步动作
             </button>
-            <datalist id="action-capability-list">
-              <option v-for="capability in permissionRows" :key="capability.id" :value="capability.id">{{ capability.name }} · {{ capability.description }}</option>
-            </datalist>
           </div>
         </section>
       </div>
@@ -2470,7 +2847,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
         <h3 class="mt-3 text-[16px] font-semibold">{{ pendingEditorLeave.title }}</h3>
         <p class="mt-2 text-[13px] leading-6 text-slate-500">检测到当前编辑内容与上一次保存状态不同。离开前可以保存，也可以放弃这次修改。</p>
         <div class="mt-4 grid grid-cols-3 gap-2">
-          <button class="rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="confirmEditorLeave(true)">保存</button>
+          <button class="rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" :disabled="savingEditor" @click="confirmEditorLeave(true)">{{ savingEditor ? '保存中' : '保存' }}</button>
           <button class="rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium text-rose-500 dark:bg-slate-900" @click="confirmEditorLeave(false)">不保存</button>
           <button class="rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="cancelEditorLeave">取消</button>
         </div>
@@ -2483,7 +2860,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             <h3 class="text-[16px] font-semibold">确认授权</h3>
             <p v-if="pendingInspection" class="mt-1 truncate text-[12px] text-slate-500">{{ pendingInspection.name }} · {{ pendingInspection.kind }}</p>
           </div>
-          <button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="pendingImportKind = null; pendingPluginImport = false; pendingInspection = null; showPermissionDialog = false">
+          <button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="closePermissionDialog">
             <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
           </button>
         </div>
@@ -2510,11 +2887,11 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
     <div v-if="pendingDelete" class="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-6 backdrop-blur-sm">
       <div class="modal-panel w-full max-w-[420px] rounded-3xl bg-white p-5 shadow-2xl dark:bg-slate-950">
         <Icon icon="solar:trash-bin-trash-bold-duotone" class="size-9 text-rose-500" />
-        <h3 class="mt-3 text-[16px] font-semibold">纭鍒犻櫎</h3>
+        <h3 class="mt-3 text-[16px] font-semibold">确认删除</h3>
         <p class="mt-2 text-[13px] leading-6 text-slate-500">即将删除「{{ pendingDelete.name }}」。删除后相关引用可能失效，请确认后继续。</p>
         <div class="mt-4 flex gap-2">
           <button class="flex-1 rounded-2xl bg-slate-100 py-2.5 text-[13px] font-medium dark:bg-slate-900" @click="pendingDelete = null">取消</button>
-          <button class="flex-1 rounded-2xl bg-rose-500 py-2.5 text-[13px] font-medium text-white" @click="performDelete">纭鍒犻櫎</button>
+          <button class="flex-1 rounded-2xl bg-rose-500 py-2.5 text-[13px] font-medium text-white" @click="performDelete">确认删除</button>
         </div>
       </div>
     </div>
