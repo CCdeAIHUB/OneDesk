@@ -22,7 +22,6 @@ namespace OneDesk.Windows;
 public sealed partial class MainForm : Form
 {
     private static readonly Size BaseInitialWindowSize = new(1200, 780);
-    private static readonly Color TransparentShellColor = Color.FromArgb(1, 2, 3);
     private const int BaseResizeGripSize = 14;
     private const int CornerRadius = 0;
     private const uint SwpNoZOrder = 0x0004;
@@ -93,8 +92,9 @@ public sealed partial class MainForm : Form
         MinimumSize = new Size(
             (int)Math.Round(1120 * dpiScale),
             (int)Math.Round(720 * dpiScale));
-        BackColor = TransparentShellColor;
-        TransparencyKey = TransparentShellColor;
+        // TransparencyKey 会把 WebView2 的 DirectComposition 表面一起变成不可见窗口。
+        // 使用黑色 DWM 玻璃承载透明 WebView，实际透明度和磨砂色由前端 app-shell 控制。
+        BackColor = Color.Black;
         FormBorderStyle = FormBorderStyle.None;
         DoubleBuffered = true;
         SetStyle(ControlStyles.ResizeRedraw, true);
@@ -470,6 +470,40 @@ public sealed partial class MainForm : Form
 }))()
 """);
             AppDiagnostics.Write($"DOM state after script injection: {injectedState}");
+        }
+
+        await CaptureFrontendForDiagnosticsAsync();
+    }
+
+    private async Task CaptureFrontendForDiagnosticsAsync()
+    {
+        var outputPath = Environment.GetEnvironmentVariable("ONEDESK_CAPTURE_FRONTEND");
+        if (string.IsNullOrWhiteSpace(outputPath) || _browser?.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // 仅供自动化视觉回归使用；正常启动不设置环境变量，因此不会产生额外文件。
+            var result = await _browser.CoreWebView2.CallDevToolsProtocolMethodAsync(
+                "Page.captureScreenshot",
+                "{\"format\":\"png\",\"captureBeyondViewport\":false}");
+            using var document = JsonDocument.Parse(result);
+            var data = document.RootElement.GetProperty("data").GetString();
+            if (string.IsNullOrWhiteSpace(data))
+            {
+                throw new InvalidDataException("Chromium 截图数据为空");
+            }
+
+            var fullPath = Path.GetFullPath(outputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            await File.WriteAllBytesAsync(fullPath, Convert.FromBase64String(data));
+            AppDiagnostics.Write($"Frontend diagnostic screenshot saved: {fullPath}");
+        }
+        catch (Exception ex)
+        {
+            AppDiagnostics.Write($"Frontend diagnostic screenshot failed: {ex}");
         }
     }
 
@@ -1813,7 +1847,7 @@ public sealed partial class MainForm : Form
         var theme = message.Payload?.ValueKind == JsonValueKind.String ? message.Payload.Value.GetString() : "light";
         var dark = string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase);
         Opacity = 1d;
-        BackColor = TransparentShellColor;
+        BackColor = Color.Black;
 
         ApplyDwmTheme(dark);
         ApplyRoundedWindow();
@@ -1909,6 +1943,9 @@ public sealed partial class MainForm : Form
 
             var ncPolicy = DwmncrpDisabled;
             _ = DwmSetWindowAttribute(Handle, DwmwaNcRenderingPolicy, ref ncPolicy, sizeof(int));
+
+            var margins = new DwmMargins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+            _ = DwmExtendFrameIntoClientArea(Handle, ref margins);
         }
         catch
         {
@@ -2013,6 +2050,9 @@ public sealed partial class MainForm : Form
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmExtendFrameIntoClientArea(nint hwnd, ref DwmMargins margins);
+
     [DllImport("user32.dll")]
     private static extern int SetWindowCompositionAttribute(nint hwnd, ref WindowCompositionAttributeData data);
 
@@ -2031,6 +2071,15 @@ public sealed partial class MainForm : Form
         public int AccentFlags;
         public int GradientColor;
         public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DwmMargins
+    {
+        public int Left;
+        public int Right;
+        public int Top;
+        public int Bottom;
     }
 
     private const string NativeBridgeScript = """
