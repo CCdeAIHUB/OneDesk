@@ -213,6 +213,66 @@ public sealed class OneDeskRepository
         return await _store.LoadAsync<ActiveSchemeState>(ActiveSchemePath(null), cancellationToken);
     }
 
+    public Task<ActiveSchemeState?> GetAssignedSchemeAsync(string deviceId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return Task.FromResult<ActiveSchemeState?>(null);
+        }
+
+        // 移动设备只能读取明确分配给自己的方案，禁止回退到桌面全局方案。
+        return _store.LoadAsync<ActiveSchemeState>(ActiveSchemePath(deviceId), cancellationToken);
+    }
+
+    public async Task<SchemeAssetChunk?> ReadSchemeAssetChunkAsync(
+        string ownerKind,
+        string ownerId,
+        string fileName,
+        long offset,
+        int requestedLength,
+        CancellationToken cancellationToken = default)
+    {
+        var root = ownerKind.ToLowerInvariant() switch
+        {
+            "component" => Path.Combine(ComponentRoot(ownerId), "assets"),
+            "page" => Path.Combine(PageRoot(ownerId), "assets"),
+            _ => throw new InvalidDataException("Asset owner kind must be component or page."),
+        };
+        var safeFileName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(safeFileName) || !string.Equals(safeFileName, fileName, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Invalid scheme asset file name.");
+        }
+
+        var path = Path.GetFullPath(Path.Combine(root, safeFileName));
+        var fullRoot = Path.GetFullPath(root);
+        if (!path.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        var info = new FileInfo(path);
+        var safeOffset = Math.Clamp(offset, 0, info.Length);
+        var length = Math.Clamp(requestedLength, 1, 24 * 1024);
+        var remaining = info.Length - safeOffset;
+        var bytes = new byte[Math.Min(length, (int)Math.Min(int.MaxValue, remaining))];
+        await using var stream = File.OpenRead(path);
+        stream.Position = safeOffset;
+        var read = await stream.ReadAsync(bytes.AsMemory(), cancellationToken);
+        if (read != bytes.Length)
+        {
+            Array.Resize(ref bytes, read);
+        }
+
+        return new SchemeAssetChunk(
+            safeFileName,
+            ContentTypeForExtension(Path.GetExtension(safeFileName)),
+            safeOffset,
+            info.Length,
+            bytes,
+            safeOffset + read >= info.Length);
+    }
+
     public void DeleteScheme(string schemeId)
     {
         DeleteDirectory(Path.Combine(_paths.Schemes, schemeId));
@@ -306,6 +366,21 @@ public sealed class OneDeskRepository
         return value;
     }
 
+    private static string ContentTypeForExtension(string extension)
+    {
+        return extension.ToLowerInvariant() switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".webp" => "image/webp",
+            ".gif" => "image/gif",
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mov" => "video/quicktime",
+            _ => "application/octet-stream",
+        };
+    }
+
     private string ActiveSchemePath(string? deviceId)
     {
         if (string.IsNullOrWhiteSpace(deviceId))
@@ -338,3 +413,11 @@ public sealed class OneDeskRepository
 }
 
 public sealed record ActiveSchemeState(string SchemeId, DateTimeOffset AppliedAt, string? DeviceId = null);
+
+public sealed record SchemeAssetChunk(
+    string FileName,
+    string ContentType,
+    long Offset,
+    long TotalBytes,
+    byte[] Bytes,
+    bool Complete);

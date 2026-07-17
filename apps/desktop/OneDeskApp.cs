@@ -32,10 +32,11 @@ public sealed partial class OneDeskApp : Application
         collection.AddSingleton<OneDeskDataPaths>();
         collection.AddSingleton<JsonFileStore>();
         collection.AddSingleton<OneDeskRepository>();
-        collection.AddSingleton<WorkspaceBootstrapper>();
         collection.AddSingleton<MainWindow>();
         _services = collection.BuildServiceProvider();
-        _services.GetRequiredService<WorkspaceBootstrapper>().EnsureSeedDataAsync().GetAwaiter().GetResult();
+        var gateway = _services.GetRequiredService<QuicGatewayService>();
+        gateway.AttachJsApiRouter(_services.GetRequiredService<JsApiRouter>());
+        gateway.StartAsync().GetAwaiter().GetResult();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

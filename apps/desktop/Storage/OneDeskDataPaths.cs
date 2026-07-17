@@ -4,11 +4,11 @@ namespace OneDesk.Desktop.Storage;
 
 public sealed class OneDeskDataPaths
 {
-    public OneDeskDataPaths()
+    public OneDeskDataPaths(string? root = null)
     {
-        Root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "OneDesk");
+        Root = string.IsNullOrWhiteSpace(root)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OneDesk")
+            : Path.GetFullPath(root);
         Components = Path.Combine(Root, "components");
         Actions = Path.Combine(Root, "actions");
         Pages = Path.Combine(Root, "pages");

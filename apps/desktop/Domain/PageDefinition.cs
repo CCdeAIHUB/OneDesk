@@ -6,6 +6,8 @@ public sealed record PageDefinition
     public required string Name { get; init; }
     public required int Rows { get; init; }
     public required int Columns { get; init; }
+    public double PreviewRatioWidth { get; init; } = 21;
+    public double PreviewRatioHeight { get; init; } = 9;
     public required GridSpacing Spacing { get; init; }
     public required string BackgroundKind { get; init; }
     public required string BackgroundValue { get; init; }

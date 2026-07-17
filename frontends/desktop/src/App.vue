@@ -257,8 +257,18 @@ const capabilitySelectOptions = computed(() => permissionRows.value.map((capabil
   group: capability.categoryName,
 })));
 const localPairingHost = computed(() => pairing.value?.host ?? workspace.deviceStatus?.localIps?.[0] ?? "127.0.0.1");
-const pagePreviewRatioWidth = ref(21);
-const pagePreviewRatioHeight = ref(9);
+const pagePreviewRatioWidth = computed({
+  get: () => normalizeRatioNumber(selectedPage.value?.previewRatioWidth ?? 21, 21),
+  set: (value: number) => {
+    if (selectedPage.value) selectedPage.value.previewRatioWidth = normalizeRatioNumber(value, 21);
+  },
+});
+const pagePreviewRatioHeight = computed({
+  get: () => normalizeRatioNumber(selectedPage.value?.previewRatioHeight ?? 9, 9),
+  set: (value: number) => {
+    if (selectedPage.value) selectedPage.value.previewRatioHeight = normalizeRatioNumber(value, 9);
+  },
+});
 const previewAspectStyle = computed(() => {
   const match = previewRatio.value.trim().match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/);
   return { aspectRatio: match ? `${match[1]} / ${match[2]}` : "1 / 1" };
@@ -1219,6 +1229,8 @@ async function createPage() {
     name,
     rows: 4,
     columns: 3,
+    previewRatioWidth: 21,
+    previewRatioHeight: 9,
     gridHorizontalAlign: "center",
     gridVerticalAlign: "center",
     spacing: { padding: 16, rowGap: 10, columnGap: 10 },
@@ -1744,10 +1756,11 @@ async function confirmApplySchemeToDevice() {
     return;
   }
   const target = applyTargetDevice.value;
-  await applyScheme(selectedScheme.value.id, target.deviceId);
+  const result = await applyScheme(selectedScheme.value.id, target.deviceId);
+  if (!result) return;
   showSchemeApplyDialog.value = false;
   await refreshDeviceConnectivity();
-  announceToast(isDeviceOnline(target.deviceId) ? "方案已应用，在线设备将自动刷新" : "方案已记录，设备下次连接时会自动推送");
+  announceToast(result.message);
 }
 
 function addPageToScheme(pageId: string) {

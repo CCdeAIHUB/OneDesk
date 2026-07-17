@@ -324,7 +324,6 @@ public sealed partial class MainForm : Form
         collection.AddSingleton<PluginHostService>();
         collection.AddSingleton<JsApiRouter>();
         collection.AddSingleton<FrontendNetworkPolicy>();
-        collection.AddSingleton<WorkspaceBootstrapper>();
         _services = collection.BuildServiceProvider();
         AppDiagnostics.Write("Service provider built.");
 
@@ -339,8 +338,8 @@ public sealed partial class MainForm : Form
         _desktopSettings = _services.GetRequiredService<DesktopSettingsService>();
         _plugins = _services.GetRequiredService<PluginHostService>();
         _logs = _services.GetRequiredService<StructuredLogStore>();
+        _gateway.AttachJsApiRouter(_jsApiRouter);
         AppDiagnostics.Write("Core services resolved.");
-        await _services.GetRequiredService<WorkspaceBootstrapper>().EnsureSeedDataAsync();
         var desktopSettings = await _desktopSettings.LoadAsync();
         await _gateway.StartAsync(desktopSettings.GatewayPort);
         AppDiagnostics.Write("Service initialization completed.");
@@ -1007,7 +1006,35 @@ public sealed partial class MainForm : Form
 
         var deviceId = ReadPayloadString(message, "deviceId");
         await _repository.ApplySchemeAsync(id, string.IsNullOrWhiteSpace(deviceId) ? null : deviceId);
-        return new BridgeResponse(message.RequestId, true, await _repository.GetActiveSchemeAsync(deviceId));
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return new BridgeResponse(message.RequestId, true, new
+            {
+                schemeId = id,
+                deviceId = (string?)null,
+                delivery = "desktop",
+                message = "方案已应用为桌面默认方案"
+            });
+        }
+
+        var push = _gateway is null
+            ? new SchemePushResult(false, false, "移动网关尚未启动，方案已记录并将在设备下次连接时同步")
+            : await _gateway.PushSchemeUpdateAsync(deviceId);
+        _logs?.Append(_devices?.DesktopIdentity.DeviceId ?? "desktop", push.Acknowledged ? "Info" : "Warning", "Scheme", "Scheme assigned to mobile device", new Dictionary<string, object?>
+        {
+            ["schemeId"] = id,
+            ["deviceId"] = deviceId,
+            ["online"] = push.Online,
+            ["acknowledged"] = push.Acknowledged,
+            ["message"] = push.Message
+        });
+        return new BridgeResponse(message.RequestId, true, new
+        {
+            schemeId = id,
+            deviceId,
+            delivery = push.Acknowledged ? "acknowledged" : push.Online ? "unconfirmed" : "pending",
+            message = push.Message
+        });
     }
 
     private async Task<BridgeResponse> HandleExportComponentAsync(BridgeMessage message)

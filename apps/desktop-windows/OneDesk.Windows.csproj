@@ -30,7 +30,6 @@
     <Compile Include="..\desktop\Services\QuicGatewayService.cs" Link="Services\QuicGatewayService.cs" />
     <Compile Include="..\desktop\Services\SchemePackageService.cs" Link="Services\SchemePackageService.cs" />
     <Compile Include="..\desktop\Services\StructuredLogStore.cs" Link="Services\StructuredLogStore.cs" />
-    <Compile Include="..\desktop\Services\WorkspaceBootstrapper.cs" Link="Services\WorkspaceBootstrapper.cs" />
   </ItemGroup>
 
   <ItemGroup>

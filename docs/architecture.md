@@ -7,7 +7,7 @@ OneDesk is a desktop-centered control system. The desktop app is the designer, e
 - Frontends are loaded with `file://`.
 - Frontends cannot perform direct networking.
 - Shells enforce networking restrictions in Chromium/CEF, Android WebView, and iOS WKWebView.
-- Desktop and mobile communicate through QUIC over UDP.
+- Desktop and mobile are required to communicate through MsQuic over UDP. The current executable path uses a chunked UDP JSON transport and is therefore a functional prototype, not final QUIC compliance.
 - Mobile-to-mobile JSAPI calls always route through the desktop gateway.
 
 ## Artifact Containment

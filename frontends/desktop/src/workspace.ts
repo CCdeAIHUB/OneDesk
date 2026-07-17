@@ -104,7 +104,16 @@ export async function loadWorkspace(options?: {
         : workspace.schemes[0]?.id ?? "";
       workspace.selectedDevice = workspace.devices[0]?.displayName ?? "未选择移动设备";
     } else {
-      applyPreviewData();
+      workspace.components = [];
+      workspace.actions = [];
+      workspace.pages = [];
+      workspace.schemes = [];
+      workspace.devices = [];
+      workspace.selectedComponentId = "";
+      workspace.selectedPageId = "";
+      workspace.selectedSchemeId = "";
+      workspace.activeSchemeId = "";
+      workspace.toast = workspaceResponse.message ?? "工作区读取失败，请检查桌面壳子日志";
     }
 
     if (capabilityResponse.ok && capabilityResponse.payload) {
@@ -160,71 +169,21 @@ export async function refreshDeviceConnectivity(): Promise<void> {
   }
 }
 
-export async function applyScheme(schemeId: string, deviceId?: string): Promise<void> {
-  const response = await sendShell<{ schemeId: string; deviceId?: string | null }>("workspace.applyScheme", { id: schemeId, deviceId });
-  if (response.ok) {
-    workspace.activeSchemeId = response.payload?.schemeId ?? schemeId;
-    workspace.toast = "方案已应用到设备";
-  } else {
-    workspace.toast = response.message ?? "方案应用失败";
-  }
+export interface SchemeApplyResult {
+  schemeId: string;
+  deviceId?: string | null;
+  delivery: "desktop" | "acknowledged" | "unconfirmed" | "pending";
+  message: string;
 }
 
-function applyPreviewData(): void {
-  workspace.components = [
-    {
-      id: "component-scene-switch",
-      name: "场景切换",
-      version: "1.0.0",
-      editMode: "visual",
-      entryFile: "src/SceneSwitch.vue",
-      visualConfigFile: "onedesk.visual.json",
-      actionIds: ["action-switch-scene"],
-      requestedPermissions: [{ category: "plugin", capability: "plugin.invoke", highRisk: false, description: "调用桌面端插件方法" }],
-      pluginDependencies: [{ id: "cc.onedesk.example.obs", version: "1.0.0", kind: "plugin" }],
-    },
-    {
-      id: "component-volume-strip",
-      name: "音量推子",
-      version: "1.0.0",
-      editMode: "code",
-      entryFile: "src/VolumeStrip.vue",
-      visualConfigFile: null,
-      actionIds: [],
-      requestedPermissions: [{ category: "input", capability: "input.keyboardMouseSimulation", highRisk: true, description: "模拟键盘快捷键调整音量" }],
-      pluginDependencies: [],
-    },
-  ];
-  workspace.actions = [
-    {
-      id: "action-switch-scene",
-      name: "切换直播场景",
-      trigger: { id: "three-finger-swipe-up", category: "touch.standard", displayName: "三指上滑", fingerCount: 3 },
-      invocations: [{ targetDeviceId: "desktop", capability: "plugin.invoke", parameters: { pluginId: "cc.onedesk.example.obs" } }],
-    },
-  ];
-  workspace.pages = [
-    {
-      id: "page-capture",
-      name: "采集",
-      rows: 4,
-      columns: 3,
-      spacing: { padding: 16, rowGap: 10, columnGap: 10 },
-      backgroundKind: "gradient",
-      backgroundValue: "sky",
-      cells: [],
-    },
-  ];
-  workspace.schemes = [
-    {
-      id: "scheme-live-console",
-      name: "直播控制台",
-      version: "1.0.0",
-      pageIds: ["page-capture"],
-      globalPrevious: { trigger: { id: "three-finger-swipe-down", category: "touch.standard", displayName: "三指下滑", fingerCount: 3 }, animation: "fade" },
-      globalNext: { trigger: { id: "three-finger-swipe-up", category: "touch.standard", displayName: "三指上滑", fingerCount: 3 }, animation: "fade" },
-      edges: [],
-      pluginDependencies: [],
-    },
-  ];
+export async function applyScheme(schemeId: string, deviceId?: string): Promise<SchemeApplyResult | null> {
+  const response = await sendShell<SchemeApplyResult>("workspace.applyScheme", { id: schemeId, deviceId });
+  if (response.ok) {
+    workspace.activeSchemeId = response.payload?.schemeId ?? schemeId;
+    workspace.toast = response.payload?.message ?? "方案已应用到设备";
+    return response.payload ?? null;
+  } else {
+    workspace.toast = response.message ?? "方案应用失败";
+    return null;
+  }
 }
