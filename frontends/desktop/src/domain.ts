@@ -216,6 +216,17 @@ export interface PackageImportResult {
   ready: boolean;
   destinationDirectory: string;
   missingPluginIds: string[];
+  unresolvedPluginConflicts: PluginVersionConflict[];
+  installedPluginIds: string[];
+}
+
+export interface PluginVersionConflict {
+  id: string;
+  requiredVersion: string;
+  installedVersion?: string | null;
+  packagedVersion?: string | null;
+  canKeepInstalled: boolean;
+  canUsePackage: boolean;
 }
 
 export interface PackageInspection {
@@ -225,6 +236,8 @@ export interface PackageInspection {
   packagePath: string;
   permissions: PermissionGrant[];
   pluginDependencies: DependencyDefinition[];
+  missingPluginIds: string[];
+  pluginConflicts: PluginVersionConflict[];
   sourceKeys: Record<string, string[]>;
 }
 

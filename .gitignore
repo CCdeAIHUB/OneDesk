@@ -8,6 +8,7 @@ artifacts/
 bin/
 obj/
 .gradle/
+.cxx/
 .idea/
 .vscode/
 *.user
@@ -15,3 +16,5 @@ obj/
 *.log
 *.tsbuildinfo
 local.properties
+apps/mobile/ios/Native/Build/
+build/ios-msquic-*/

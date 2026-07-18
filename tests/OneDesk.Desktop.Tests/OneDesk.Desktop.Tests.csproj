@@ -16,4 +16,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\apps\desktop\OneDesk.Desktop.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\packages\protocol\capabilities.json" Link="contracts\capabilities.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

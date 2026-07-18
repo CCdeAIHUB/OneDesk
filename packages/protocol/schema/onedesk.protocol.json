@@ -1,0 +1,80 @@
+{
+  "protocolVersion": 1,
+  "enums": {
+    "GatewayMessageType": ["request", "response", "event"],
+    "ProtocolDeviceKind": ["desktop", "mobile"],
+    "ProtocolSourceKind": ["component", "plugin", "system"]
+  },
+  "records": {
+    "ProtocolDeviceIdentity": [
+      { "name": "deviceId", "type": "string" },
+      { "name": "displayName", "type": "string" },
+      { "name": "kind", "type": "ProtocolDeviceKind" },
+      { "name": "platform", "type": "string" },
+      { "name": "architecture", "type": "string" }
+    ],
+    "ProtocolTrustedSource": [
+      { "name": "schemeId", "type": "string", "optional": true },
+      { "name": "pageId", "type": "string", "optional": true },
+      { "name": "componentId", "type": "string", "optional": true },
+      { "name": "pluginId", "type": "string", "optional": true },
+      { "name": "kind", "type": "ProtocolSourceKind" }
+    ],
+    "PairingRequestContract": [
+      { "name": "verificationCode", "type": "string" },
+      { "name": "clientNonce", "type": "string" },
+      { "name": "mobileIdentity", "type": "ProtocolDeviceIdentity" }
+    ],
+    "PairingResponseContract": [
+      { "name": "desktopIdentity", "type": "ProtocolDeviceIdentity" },
+      { "name": "assignedMobileIdentity", "type": "ProtocolDeviceIdentity" },
+      { "name": "trustCredential", "type": "string" },
+      { "name": "credentialExpiresAtUnixMs", "type": "long" }
+    ],
+    "TrustedConnectRequestContract": [
+      { "name": "trustCredential", "type": "string" },
+      { "name": "clientNonce", "type": "string" },
+      { "name": "mobileIdentity", "type": "ProtocolDeviceIdentity" }
+    ],
+    "JsApiRequestContract": [
+      { "name": "requestId", "type": "string" },
+      { "name": "targetDeviceId", "type": "string" },
+      { "name": "source", "type": "ProtocolTrustedSource" },
+      { "name": "capability", "type": "string" },
+      { "name": "payload", "type": "json" }
+    ],
+    "JsApiErrorContract": [
+      { "name": "code", "type": "string" },
+      { "name": "message", "type": "string" },
+      { "name": "highRisk", "type": "bool" }
+    ],
+    "JsApiResponseContract": [
+      { "name": "requestId", "type": "string" },
+      { "name": "ok", "type": "bool" },
+      { "name": "error", "type": "JsApiErrorContract", "optional": true },
+      { "name": "payload", "type": "json", "optional": true }
+    ],
+    "SchemeDescriptorContract": [
+      { "name": "version", "type": "string" },
+      { "name": "hash", "type": "string" },
+      { "name": "totalBytes", "type": "long" },
+      { "name": "hasScheme", "type": "bool" }
+    ],
+    "LogRecordContract": [
+      { "name": "logId", "type": "string" },
+      { "name": "createdAtUnixMs", "type": "long" },
+      { "name": "sourceDeviceId", "type": "string" },
+      { "name": "level", "type": "string" },
+      { "name": "category", "type": "string" },
+      { "name": "message", "type": "string" },
+      { "name": "context", "type": "json" }
+    ],
+    "MobileGatewayEnvelope": [
+      { "name": "protocolVersion", "type": "int" },
+      { "name": "messageType", "type": "string" },
+      { "name": "messageId", "type": "string" },
+      { "name": "correlationId", "type": "string", "optional": true },
+      { "name": "payload", "type": "json" }
+    ]
+  }
+}

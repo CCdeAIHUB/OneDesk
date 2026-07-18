@@ -1,0 +1,297 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B00000000000000000000001 /* OneDeskApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* OneDeskApp.swift */; };
+		B00000000000000000000002 /* GeneratedProtocolContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* GeneratedProtocolContracts.swift */; };
+		B00000000000000000000003 /* JSONSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* JSONSupport.swift */; };
+		B00000000000000000000004 /* MobileRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000004 /* MobileRuntime.swift */; };
+		B00000000000000000000005 /* KeychainCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000005 /* KeychainCredentialStore.swift */; };
+		B00000000000000000000006 /* KnownDesktopStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000006 /* KnownDesktopStore.swift */; };
+		B00000000000000000000007 /* SchemeCacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000007 /* SchemeCacheService.swift */; };
+		B00000000000000000000008 /* MobileLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000008 /* MobileLogStore.swift */; };
+		B00000000000000000000009 /* MobileConnectionStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000009 /* MobileConnectionStateMachine.swift */; };
+		B0000000000000000000000A /* MsQuicTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000A /* MsQuicTransport.swift */; };
+		B0000000000000000000000B /* MobileGatewayClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000B /* MobileGatewayClient.swift */; };
+		B0000000000000000000000C /* IosCapabilityExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000C /* IosCapabilityExecutor.swift */; };
+		B0000000000000000000000D /* PairingScannerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000D /* PairingScannerController.swift */; };
+		B0000000000000000000000E /* OneDeskWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000E /* OneDeskWebView.swift */; };
+		B0000000000000000000000F /* onedesk_msquic.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F0000000000000000000000F /* onedesk_msquic.cpp */; };
+		B00000000000000000000010 /* mobile in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000012 /* mobile */; };
+		B00000000000000000000011 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000014 /* AVFoundation.framework */; };
+		B00000000000000000000012 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000015 /* Security.framework */; };
+		B00000000000000000000013 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* WebKit.framework */; };
+		B00000000000000000000014 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* UserNotifications.framework */; };
+		B00000000000000000000015 /* GeneratedCapabilityCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000019 /* GeneratedCapabilityCatalog.swift */; };
+		B00000000000000000000016 /* DeviceTriggerMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* DeviceTriggerMonitor.swift */; };
+		B00000000000000000000017 /* CoreMotion.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000021 /* CoreMotion.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F00000000000000000000001 /* OneDeskApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneDeskApp.swift; sourceTree = "<group>"; };
+		F00000000000000000000002 /* GeneratedProtocolContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratedProtocolContracts.swift; sourceTree = "<group>"; };
+		F00000000000000000000003 /* JSONSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core/JSONSupport.swift; sourceTree = "<group>"; };
+		F00000000000000000000004 /* MobileRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/MobileRuntime.swift; sourceTree = "<group>"; };
+		F00000000000000000000005 /* KeychainCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Storage/KeychainCredentialStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000006 /* KnownDesktopStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Storage/KnownDesktopStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000007 /* SchemeCacheService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Storage/SchemeCacheService.swift; sourceTree = "<group>"; };
+		F00000000000000000000008 /* MobileLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging/MobileLogStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000009 /* MobileConnectionStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/MobileConnectionStateMachine.swift; sourceTree = "<group>"; };
+		F0000000000000000000000A /* MsQuicTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/MsQuicTransport.swift; sourceTree = "<group>"; };
+		F0000000000000000000000B /* MobileGatewayClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transport/MobileGatewayClient.swift; sourceTree = "<group>"; };
+		F0000000000000000000000C /* IosCapabilityExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Capabilities/IosCapabilityExecutor.swift; sourceTree = "<group>"; };
+		F0000000000000000000000D /* PairingScannerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QR/PairingScannerController.swift; sourceTree = "<group>"; };
+		F0000000000000000000000E /* OneDeskWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Web/OneDeskWebView.swift; sourceTree = "<group>"; };
+		F0000000000000000000000F /* onedesk_msquic.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Native/onedesk_msquic.cpp; sourceTree = "<group>"; };
+		F00000000000000000000010 /* onedesk_msquic.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Native/onedesk_msquic.h; sourceTree = "<group>"; };
+		F00000000000000000000011 /* OneDesk-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Native/OneDesk-Bridging-Header.h; sourceTree = "<group>"; };
+		F00000000000000000000012 /* mobile */ = {isa = PBXFileReference; lastKnownFileType = folder; name = mobile; path = ../../../frontends/mobile/dist; sourceTree = "<group>"; };
+		F00000000000000000000013 /* OneDesk.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneDesk.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000014 /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		F00000000000000000000015 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		F00000000000000000000016 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		F00000000000000000000017 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
+		F00000000000000000000018 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000019 /* GeneratedCapabilityCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratedCapabilityCatalog.swift; sourceTree = "<group>"; };
+		F00000000000000000000020 /* DeviceTriggerMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Triggers/DeviceTriggerMonitor.swift; sourceTree = "<group>"; };
+		F00000000000000000000021 /* CoreMotion.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMotion.framework; path = System/Library/Frameworks/CoreMotion.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000011 /* AVFoundation.framework in Frameworks */,
+				B00000000000000000000012 /* Security.framework in Frameworks */,
+				B00000000000000000000013 /* WebKit.framework in Frameworks */,
+				B00000000000000000000014 /* UserNotifications.framework in Frameworks */,
+				B00000000000000000000017 /* CoreMotion.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000001 /* OneDeskApp.swift */,
+				F00000000000000000000002 /* GeneratedProtocolContracts.swift */,
+				F00000000000000000000019 /* GeneratedCapabilityCatalog.swift */,
+				F00000000000000000000020 /* DeviceTriggerMonitor.swift */,
+				F00000000000000000000003 /* JSONSupport.swift */,
+				F00000000000000000000004 /* MobileRuntime.swift */,
+				F00000000000000000000005 /* KeychainCredentialStore.swift */,
+				F00000000000000000000006 /* KnownDesktopStore.swift */,
+				F00000000000000000000007 /* SchemeCacheService.swift */,
+				F00000000000000000000008 /* MobileLogStore.swift */,
+				F00000000000000000000009 /* MobileConnectionStateMachine.swift */,
+				F0000000000000000000000A /* MsQuicTransport.swift */,
+				F0000000000000000000000B /* MobileGatewayClient.swift */,
+				F0000000000000000000000C /* IosCapabilityExecutor.swift */,
+				F0000000000000000000000D /* PairingScannerController.swift */,
+				F0000000000000000000000E /* OneDeskWebView.swift */,
+				F0000000000000000000000F /* onedesk_msquic.cpp */,
+				F00000000000000000000010 /* onedesk_msquic.h */,
+				F00000000000000000000011 /* OneDesk-Bridging-Header.h */,
+				F00000000000000000000012 /* mobile */,
+				F00000000000000000000018 /* Info.plist */,
+				A00000000000000000000002 /* Frameworks */,
+				A00000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000000000000000000002 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000014 /* AVFoundation.framework */,
+				F00000000000000000000015 /* Security.framework */,
+				F00000000000000000000016 /* WebKit.framework */,
+				F00000000000000000000017 /* UserNotifications.framework */,
+				F00000000000000000000021 /* CoreMotion.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (F00000000000000000000013 /* OneDesk.app */);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000000000000000000005 /* OneDesk */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A0000000000000000000000C /* Build configuration list for PBXNativeTarget "OneDesk" */;
+			buildPhases = (
+				A00000000000000000000008 /* 准备前端与 MsQuic */,
+				A00000000000000000000006 /* Sources */,
+				A00000000000000000000004 /* Frameworks */,
+				A00000000000000000000007 /* Resources */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = OneDesk;
+			productName = OneDesk;
+			productReference = F00000000000000000000013 /* OneDesk.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000009 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = { A00000000000000000000005 = { CreatedOnToolsVersion = 16.0; }; };
+			};
+			buildConfigurationList = A0000000000000000000000B /* Build configuration list for PBXProject "OneDesk" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (Base, en, zh_CN);
+			mainGroup = A00000000000000000000001;
+			productRefGroup = A00000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A00000000000000000000005 /* OneDesk */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A00000000000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (B00000000000000000000010 /* mobile in Resources */);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A00000000000000000000008 /* 准备前端与 MsQuic */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "准备前端与 MsQuic";
+			outputPaths = ("$(SRCROOT)/Native/Build/$(PLATFORM_NAME)/libmsquic.a");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"${SRCROOT}/scripts/prepare-ios-dependencies.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00000000000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* OneDeskApp.swift in Sources */,
+				B00000000000000000000002 /* GeneratedProtocolContracts.swift in Sources */,
+				B00000000000000000000015 /* GeneratedCapabilityCatalog.swift in Sources */,
+				B00000000000000000000016 /* DeviceTriggerMonitor.swift in Sources */,
+				B00000000000000000000003 /* JSONSupport.swift in Sources */,
+				B00000000000000000000004 /* MobileRuntime.swift in Sources */,
+				B00000000000000000000005 /* KeychainCredentialStore.swift in Sources */,
+				B00000000000000000000006 /* KnownDesktopStore.swift in Sources */,
+				B00000000000000000000007 /* SchemeCacheService.swift in Sources */,
+				B00000000000000000000008 /* MobileLogStore.swift in Sources */,
+				B00000000000000000000009 /* MobileConnectionStateMachine.swift in Sources */,
+				B0000000000000000000000A /* MsQuicTransport.swift in Sources */,
+				B0000000000000000000000B /* MobileGatewayClient.swift in Sources */,
+				B0000000000000000000000C /* IosCapabilityExecutor.swift in Sources */,
+				B0000000000000000000000D /* PairingScannerController.swift in Sources */,
+				B0000000000000000000000E /* OneDeskWebView.swift in Sources */,
+				B0000000000000000000000F /* onedesk_msquic.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A0000000000000000000000D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; };
+			name = Debug;
+		};
+		A0000000000000000000000E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; };
+			name = Release;
+		};
+		A0000000000000000000000F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/../../../third_party/msquic/src/inc");
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+				LIBRARY_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/Native/Build/$(PLATFORM_NAME)");
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = ("$(inherited)", "-lmsquic", "-lc++");
+				PRODUCT_BUNDLE_IDENTIFIER = cc.onedesk.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = Native/OneDesk-Bridging-Header.h;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A00000000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/../../../third_party/msquic/src/inc");
+				INFOPLIST_FILE = Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+				LIBRARY_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/Native/Build/$(PLATFORM_NAME)");
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = ("$(inherited)", "-lmsquic", "-lc++");
+				PRODUCT_BUNDLE_IDENTIFIER = cc.onedesk.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OBJC_BRIDGING_HEADER = Native/OneDesk-Bridging-Header.h;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A0000000000000000000000B /* Build configuration list for PBXProject "OneDesk" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (A0000000000000000000000D /* Debug */, A0000000000000000000000E /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A0000000000000000000000C /* Build configuration list for PBXNativeTarget "OneDesk" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (A0000000000000000000000F /* Debug */, A00000000000000000000010 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000000000000000000009 /* Project object */;
+}

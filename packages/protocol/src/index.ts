@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./generated/protocol.js";
+
 export const permissionRiskSchema = z.enum(["normal", "high"]);
 
 export const permissionSchema = z.object({

@@ -4,9 +4,15 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import QRCode from "qrcode";
 import CodeMirrorEditor from "./components/CodeMirrorEditor.vue";
 import UiSelect from "./components/UiSelect.vue";
-import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TriggerDefinition, TrustedPairingCredential, ViewKey } from "./domain";
+import type { ActionDefinition, ComponentDefinition, MediaResourceCopyResult, MediaResourceDefinition, PackageExportResult, PackageImportResult, PackageInspection, PageDefinition, PluginManifest, SchemeDefinition, SectionRoute, ThemeMode, TrustedPairingCredential, ViewKey } from "./domain";
 import { applyScheme, loadWorkspace, navItems, quickActions, quickStart, refreshDeviceConnectivity, workspace } from "./workspace";
-import { closeWindow, maximizeWindow, minimizeWindow, moveWindowBy, sendShell, setShellTheme, startWindowResize } from "./nativeBridge";
+import { closeWindow, minimizeWindow, sendShell, setShellTheme } from "./nativeBridge";
+import { reloadFrontendPlugins, stopFrontendPlugins } from "./frontendPluginRuntime";
+import { animationOptions, backgroundKindOptions, buildTriggerDefinition, findTrigger, horizontalAlignOptions, imageSizeOptions, languageOptions, layoutOptions, lockedStateOptions, outlineStyleOptions, positionOptions, pressedStateOptions, themeOptions, triggerLabel, triggerOptions, triggerSelectOptions, verticalAlignOptions } from "./editorCatalogs";
+import { ensureUniqueName, findNameConflict as locateNameConflict, type NamedEntity } from "./nameRegistry";
+import { calculatePreviewFrameSize, normalizeRatioNumber } from "./previewGeometry";
+import { useToastQueue } from "./useToastQueue";
+import { useWindowInteractions } from "./useWindowInteractions";
 import {
   applyDpiScaling,
   componentPreviewStyle as buildComponentPreviewStyle,
@@ -61,6 +67,7 @@ const pendingImportKind = ref<"Component" | "Page" | "Scheme" | null>(null);
 const pendingPluginImport = ref(false);
 const pendingInspection = ref<PackageInspection | null>(null);
 const grantedImportCapabilities = ref<string[]>([]);
+const pluginImportChoices = ref<Record<string, "keepInstalled" | "usePackage">>({});
 const selectedDeviceId = ref("");
 const applyTargetDeviceId = ref("");
 const selectedPluginId = ref("");
@@ -82,7 +89,6 @@ const connectionPort = ref(48320);
 const savedConnectionPort = ref(48320);
 const savingSettings = ref(false);
 const savingEditor = ref(false);
-const toasts = ref<Array<{ id: number; message: string }>>([]);
 const draggingSchemePageIndex = ref<number | null>(null);
 const schemePageToAddId = ref("");
 const permissionSourceKind = ref<"component" | "plugin">("component");
@@ -91,132 +97,15 @@ const visualConfig = ref<VisualConfig>(defaultVisualConfig());
 const loadingComponentId = ref("");
 const componentVideoPreviewState = ref<"idle" | "loading" | "ready" | "error">("idle");
 const componentVideoPreviewKey = ref(0);
-let toastSequence = 0;
+const { toasts, pushToast } = useToastQueue();
+const { toggleMaximize, handleWindowDrag, handleWindowPointerMove } = useWindowInteractions(isMaximized);
 let componentLoadSequence = 0;
-let windowMovePointerId = -1;
-let windowMoveLastScreenX = 0;
-let windowMoveLastScreenY = 0;
-let pendingWindowMoveX = 0;
-let pendingWindowMoveY = 0;
-let pendingWindowMoveFrame = 0;
 let deviceRefreshTimer = 0;
 let systemThemeMedia: MediaQueryList | null = null;
 
-const triggerCatalog: Array<{ category: string; label: string; triggers: Array<{ id: string; displayName: string; fingerCount?: number }> }> = [
-  {
-    category: "touch.standard",
-    label: "标准触摸",
-    triggers: [
-      { id: "tap", displayName: "单击" },
-      { id: "double-tap", displayName: "双击" },
-      { id: "long-press", displayName: "长按" },
-      { id: "press-and-hold", displayName: "按住" },
-      { id: "swipe-up", displayName: "上滑", fingerCount: 1 },
-      { id: "swipe-down", displayName: "下滑", fingerCount: 1 },
-      { id: "swipe-left", displayName: "左滑", fingerCount: 1 },
-      { id: "swipe-right", displayName: "右滑", fingerCount: 1 },
-      { id: "horizontal-swipe", displayName: "横向滑动", fingerCount: 1 },
-      { id: "vertical-swipe", displayName: "纵向滑动", fingerCount: 1 },
-      { id: "pinch-in", displayName: "捏合" },
-      { id: "pinch-out", displayName: "张开" },
-      { id: "rotate", displayName: "旋转" },
-    ],
-  },
-  {
-    category: "touch.multi",
-    label: "多指触摸",
-    triggers: [2, 3, 4, 5].flatMap((finger) =>
-      ["up", "down", "left", "right"].map((dir) => ({
-        id: `${finger}-finger-swipe-${dir}`,
-        displayName: `${finger}指${dir === "up" ? "上" : dir === "down" ? "下" : dir === "left" ? "左" : "右"}滑`,
-        fingerCount: finger,
-      })),
-    ),
-  },
-  {
-    category: "sensor",
-    label: "设备传感器",
-    triggers: [
-      { id: "shake", displayName: "摇晃" },
-      { id: "orientation-change", displayName: "方向变化" },
-      { id: "tilt-up", displayName: "向上倾斜" },
-      { id: "tilt-down", displayName: "向下倾斜" },
-      { id: "tilt-left", displayName: "向左倾斜" },
-      { id: "tilt-right", displayName: "向右倾斜" },
-    ],
-  },
-];
-
-const triggerOptions = computed(() => triggerCatalog.flatMap((group) => group.triggers.map((trigger) => ({ ...trigger, category: group.category }))));
-const triggerSelectOptions = computed(() => triggerCatalog.flatMap((group) => group.triggers.map((trigger) => ({ value: trigger.id, label: trigger.displayName, group: group.label }))));
-const layoutOptions = [
-  { value: "center", label: "居中" },
-  { value: "left", label: "靠左" },
-  { value: "right", label: "靠右" },
-  { value: "bottom", label: "靠下" },
-];
-const backgroundKindOptions = [
-  { value: "gradient", label: "渐变背景" },
-  { value: "solid", label: "纯色背景" },
-  { value: "image", label: "图片背景" },
-  { value: "video", label: "视频背景" },
-];
-const imageSizeOptions = [
-  { value: "cover", label: "填充覆盖" },
-  { value: "contain", label: "完整显示" },
-];
-const positionOptions = [
-  { value: "center", label: "居中" },
-  { value: "left", label: "靠左" },
-  { value: "right", label: "靠右" },
-  { value: "top", label: "靠上" },
-  { value: "bottom", label: "靠下" },
-];
-const horizontalAlignOptions = positionOptions.filter((option) => ["left", "center", "right"].includes(option.value));
-const verticalAlignOptions = positionOptions.filter((option) => ["top", "center", "bottom"].includes(option.value));
-const pressedStateOptions = [
-  { value: "scale-95", label: "按下缩小" },
-  { value: "brightness-110", label: "按下高亮" },
-  { value: "none", label: "无" },
-];
-const lockedStateOptions = [
-  { value: "opacity-60", label: "降低透明度" },
-  { value: "grayscale", label: "增加灰度蒙层" },
-  { value: "none", label: "无" },
-];
-const outlineStyleOptions = [
-  { value: "solid", label: "实线" },
-  { value: "dashed", label: "虚线" },
-  { value: "dotted", label: "点线" },
-];
-const animationOptions = [
-  { value: "fade", label: "渐入渐退" },
-  { value: "slide", label: "滑动" },
-  { value: "none", label: "无动画" },
-];
-const themeOptions = [
-  { value: "system", label: "跟随系统" },
-  { value: "light", label: "浅色" },
-  { value: "dark", label: "深色" },
-];
-const languageOptions = [{ value: "zh-CN", label: "简体中文" }];
-
-function findTrigger(id: string) {
-  return triggerOptions.value.find((trigger) => trigger.id === id) ?? { id, displayName: id, category: "touch.standard" };
-}
-
-function buildTriggerDefinition(trigger: { id: string; category: string; displayName: string; fingerCount?: number; platformLimited?: boolean }): TriggerDefinition {
-  return {
-    id: trigger.id,
-    category: trigger.category,
-    displayName: trigger.displayName,
-    fingerCount: trigger.fingerCount ?? (trigger.category === "sensor" ? 0 : 1),
-    platformLimited: trigger.platformLimited,
-  };
-}
-
-function triggerLabel(trigger: { id: string; displayName: string }) {
-  return trigger.displayName;
+function handleNativeInAppNotification(event: Event) {
+  const message = (event as CustomEvent<string>).detail;
+  if (message) announceToast(message);
 }
 
 const selectedComponent = computed(() => workspace.components.find((item) => item.id === workspace.selectedComponentId) ?? workspace.components[0]);
@@ -320,27 +209,6 @@ function measurePagePreviewFrame() {
   pagePreviewFrameSize.value = calculatePreviewFrameSize(el.clientWidth, el.clientHeight, ratioWidth, ratioHeight);
 }
 
-function normalizeRatioNumber(value: number, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function calculatePreviewFrameSize(parentWidth: number, parentHeight: number, ratioWidth: number, ratioHeight: number) {
-  const safeWidth = Math.max(0, parentWidth);
-  const safeHeight = Math.max(0, parentHeight);
-  if (safeWidth <= 0 || safeHeight <= 0) return { width: 0, height: 0 };
-
-  // 页面预览必须完整收进父容器，所以先按可用宽度推导高度，过高时再以高度反算宽度。
-  const ratio = ratioWidth / ratioHeight;
-  let width = safeWidth;
-  let height = width / ratio;
-  if (height > safeHeight) {
-    height = safeHeight;
-    width = height * ratio;
-  }
-  return { width: Math.floor(width), height: Math.floor(height) };
-}
-
 function swapPagePreviewRatio() {
   const width = pagePreviewRatioWidth.value;
   pagePreviewRatioWidth.value = pagePreviewRatioHeight.value;
@@ -365,6 +233,9 @@ function bindPagePreviewObserver() {
 
 const pageGridStyle = computed(() => buildPageGridStyle(selectedPage.value, pagePreviewFrameSize.value));
 const importPermissionRows = computed(() => pendingInspection.value?.permissions ?? selectedComponent.value?.requestedPermissions ?? []);
+const canConfirmImport = computed(() =>
+  !(pendingInspection.value?.missingPluginIds.length) &&
+  (pendingInspection.value?.pluginConflicts ?? []).every((conflict) => Boolean(pluginImportChoices.value[conflict.id])));
 const selectedPlugin = computed(() => workspace.plugins.find((plugin) => plugin.id === selectedPluginId.value) ?? workspace.plugins[0] ?? null);
 const componentCodeFiles = computed(() => [
   { path: "src/Component.vue", icon: "solar:file-text-bold-duotone" },
@@ -518,6 +389,7 @@ onMounted(async () => {
   applyDpiScaling(document.documentElement);
   window.addEventListener("resize", handleWindowResize);
   window.addEventListener("keydown", handleGlobalKeydown);
+  window.addEventListener("onedesk-in-app-notification", handleNativeInAppNotification);
   systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
   systemThemeMedia.addEventListener("change", handleSystemThemeChange);
   setTheme(theme.value);
@@ -532,12 +404,19 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  stopFrontendPlugins();
   if (deviceRefreshTimer) window.clearInterval(deviceRefreshTimer);
   window.removeEventListener("resize", handleWindowResize);
   window.removeEventListener("keydown", handleGlobalKeydown);
+  window.removeEventListener("onedesk-in-app-notification", handleNativeInAppNotification);
   systemThemeMedia?.removeEventListener("change", handleSystemThemeChange);
   systemThemeMedia = null;
   pagePreviewResizeObserver?.disconnect();
+});
+
+// 插件列表发生安装、升级或删除时轮换沙箱会话，旧 iframe 因此无法继续调用宿主。
+watch(() => workspace.plugins.map((plugin) => `${plugin.id}@${plugin.version}`).join("|"), () => {
+  void reloadFrontendPlugins((message) => announceToast(message));
 });
 
 // 页面预览舞台出现或变化时，重新绑定尺寸观察器。
@@ -590,14 +469,6 @@ watch(
   { immediate: true },
 );
 
-function pushToast(message: string) {
-  const id = ++toastSequence;
-  toasts.value = [...toasts.value, { id, message }].slice(-4);
-  window.setTimeout(() => {
-    toasts.value = toasts.value.filter((toast) => toast.id !== id);
-  }, 3200);
-}
-
 function announceToast(message: string) {
   workspace.toast = "";
   window.setTimeout(() => {
@@ -631,37 +502,21 @@ function markComponentVideoError() {
   }
 }
 
-function normalizeName(name: string) {
-  return name.trim().toLocaleLowerCase();
-}
-
 function findNameConflict(kind: "component" | "page" | "scheme" | "plugin", id: string, name: string) {
-  const normalized = normalizeName(name);
-  if (!normalized) return null;
-  const pools = [
-    ...workspace.components.map((item) => ({ kind: "component", id: item.id, name: item.name })),
-    ...workspace.pages.map((item) => ({ kind: "page", id: item.id, name: item.name })),
-    ...workspace.schemes.map((item) => ({ kind: "scheme", id: item.id, name: item.name })),
-    ...workspace.plugins.map((item) => ({ kind: "plugin", id: item.id, name: item.name })),
-  ] as const;
-  return pools.find((item) => !(item.kind === kind && item.id === id) && normalizeName(item.name) === normalized) ?? null;
+  return locateNameConflict(namedEntities(), kind, id, name);
 }
 
 function ensureUniqueDraftName(baseName: string) {
-  const existing = new Set([
-    ...workspace.components.map((item) => normalizeName(item.name)),
-    ...workspace.pages.map((item) => normalizeName(item.name)),
-    ...workspace.schemes.map((item) => normalizeName(item.name)),
-    ...workspace.plugins.map((item) => normalizeName(item.name)),
-  ]);
-  if (!existing.has(normalizeName(baseName))) return baseName;
-  let index = 2;
-  let nextName = `${baseName} ${index}`;
-  while (existing.has(normalizeName(nextName))) {
-    index += 1;
-    nextName = `${baseName} ${index}`;
-  }
-  return nextName;
+  return ensureUniqueName(namedEntities(), baseName);
+}
+
+function namedEntities(): NamedEntity[] {
+  return [
+    ...workspace.components.map((item) => ({ kind: "component" as const, id: item.id, name: item.name })),
+    ...workspace.pages.map((item) => ({ kind: "page" as const, id: item.id, name: item.name })),
+    ...workspace.schemes.map((item) => ({ kind: "scheme" as const, id: item.id, name: item.name })),
+    ...workspace.plugins.map((item) => ({ kind: "plugin" as const, id: item.id, name: item.name })),
+  ];
 }
 
 function ensureEditorNameAvailable() {
@@ -919,130 +774,6 @@ function setTheme(next: ThemeMode) {
   theme.value = next;
   window.localStorage.setItem(THEME_STORAGE_KEY, next);
   applyTheme(next);
-}
-
-async function toggleMaximize() {
-  isMaximized.value = await maximizeWindow();
-}
-
-function handleWindowDrag(event: PointerEvent) {
-  if (event.button !== 0) return;
-  const target = event.target instanceof Element ? event.target : null;
-  if (!isMaximized.value) {
-    const edge = resizeEdgeFromPointer(event);
-    if (edge) {
-      void startWindowResize(edge);
-      return;
-    }
-  }
-  if (isMaximized.value) return;
-  if (target?.closest("button,input,select,textarea,a,.soft-card,.soft-row,.soft-start,.theme-dot,.window-controls,.no-drag,.device-menu,[data-no-window-drag]")) return;
-  const headerEl = target?.closest("header");
-  const asideEl = target?.closest("aside");
-  if (!headerEl && !asideEl) return;
-  const scroller = target?.closest(".scrollable");
-  if (scroller) {
-    const rect = scroller.getBoundingClientRect();
-    if (event.clientX >= rect.right - 24 || event.clientY >= rect.bottom - 24) return;
-  }
-  beginWindowMove(event);
-}
-
-function beginWindowMove(event: PointerEvent) {
-  windowMovePointerId = event.pointerId;
-  windowMoveLastScreenX = event.screenX;
-  windowMoveLastScreenY = event.screenY;
-  document.documentElement.classList.add("window-moving");
-  window.addEventListener("pointermove", moveWindowWithPointer);
-  window.addEventListener("pointerup", endWindowMove);
-  window.addEventListener("pointercancel", endWindowMove);
-  event.preventDefault();
-}
-
-function moveWindowWithPointer(event: PointerEvent) {
-  if (event.pointerId !== windowMovePointerId) return;
-  const dx = Math.round(event.screenX - windowMoveLastScreenX);
-  const dy = Math.round(event.screenY - windowMoveLastScreenY);
-  windowMoveLastScreenX = event.screenX;
-  windowMoveLastScreenY = event.screenY;
-  if (dx === 0 && dy === 0) return;
-  pendingWindowMoveX += dx;
-  pendingWindowMoveY += dy;
-  if (pendingWindowMoveFrame) return;
-  pendingWindowMoveFrame = window.requestAnimationFrame(flushWindowMove);
-}
-
-function flushWindowMove() {
-  pendingWindowMoveFrame = 0;
-  const dx = pendingWindowMoveX;
-  const dy = pendingWindowMoveY;
-  pendingWindowMoveX = 0;
-  pendingWindowMoveY = 0;
-  if (dx !== 0 || dy !== 0) {
-    void moveWindowBy(dx, dy);
-  }
-}
-
-function endWindowMove(event: PointerEvent) {
-  if (event.pointerId !== windowMovePointerId) return;
-  windowMovePointerId = -1;
-  window.removeEventListener("pointermove", moveWindowWithPointer);
-  window.removeEventListener("pointerup", endWindowMove);
-  window.removeEventListener("pointercancel", endWindowMove);
-  document.documentElement.classList.remove("window-moving");
-  if (pendingWindowMoveFrame) {
-    window.cancelAnimationFrame(pendingWindowMoveFrame);
-    flushWindowMove();
-  }
-}
-
-function resizeEdgeFromPointer(event: PointerEvent) {
-  // 高 DPI 屏幕上扩大边缘热区，避免缩放后窗口边缘难以拖拽。
-  const margin = Math.max(12, Math.round(12 * window.devicePixelRatio));
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const left = event.clientX <= margin;
-  const right = event.clientX >= width - margin;
-  const top = event.clientY <= margin;
-  const bottom = event.clientY >= height - margin;
-  if (top && left) return "top-left";
-  if (top && right) return "top-right";
-  if (bottom && left) return "bottom-left";
-  if (bottom && right) return "bottom-right";
-  if (left) return "left";
-  if (right) return "right";
-  if (top) return "top";
-  if (bottom) return "bottom";
-  return "";
-}
-
-const resizeCursorMap: Record<string, string> = {
-  left: "ew-resize",
-  right: "ew-resize",
-  top: "ns-resize",
-  bottom: "ns-resize",
-  "top-left": "nwse-resize",
-  "bottom-right": "nwse-resize",
-  "top-right": "nesw-resize",
-  "bottom-left": "nesw-resize",
-};
-
-function handleWindowPointerMove(event: PointerEvent) {
-  if (isMaximized.value || event.buttons !== 0) {
-    document.body.style.cursor = "";
-    return;
-  }
-  const edge = resizeEdgeFromPointer(event);
-  if (!edge) {
-    document.body.style.cursor = "";
-    return;
-  }
-  const target = event.target instanceof Element ? event.target : null;
-  if (target?.closest("button,input,select,textarea,a,nav,.soft-card,.soft-row,.soft-start,.theme-dot,.window-controls,.no-drag,.device-menu,[data-no-window-drag]")) {
-    document.body.style.cursor = "";
-    return;
-  }
-  document.body.style.cursor = resizeCursorMap[edge] ?? "";
 }
 
 async function chooseComponent(component: ComponentDefinition, skipGuard = false) {
@@ -1339,6 +1070,14 @@ async function saveComponent() {
     }
     codeFileDrafts.value["onedesk.component.json"] = JSON.stringify(selectedComponent.value, null, 2);
 
+    if (componentEditorMode.value === "code") {
+      announceToast("正在构建代码组件...");
+      const artifact = await buildCodeComponentArtifact(codeFileDrafts.value, selectedComponent.value.entryFile);
+      codeFileDrafts.value[artifact.manifest.codeFile] = artifact.code;
+      codeFileDrafts.value[artifact.manifest.styleFile] = artifact.style;
+      codeFileDrafts.value["dist/onedesk.runtime.json"] = JSON.stringify(artifact.manifest, null, 2);
+    }
+
     const componentId = selectedComponent.value.id;
     const response = await sendShell<ComponentDefinition>("workspace.saveComponent", selectedComponent.value);
     if (!response.ok) {
@@ -1372,7 +1111,7 @@ function addComponentAction() {
 function openActionDesigner(action?: ActionDefinition) {
   if (!selectedComponent.value) return;
   const used = new Set(selectedComponentActions.value.filter((item) => item.id !== action?.id).map((item) => item.trigger.id));
-  const fallbackTrigger = triggerOptions.value.find((trigger) => !used.has(trigger.id)) ?? triggerOptions.value[0];
+  const fallbackTrigger = triggerOptions.find((trigger) => !used.has(trigger.id)) ?? triggerOptions[0];
   const draft: ActionDefinition = action ? {
     id: action.id,
     name: action.name,
@@ -1834,6 +1573,10 @@ async function importWorkspace(kind: "Component" | "Page" | "Scheme") {
   }
   pendingInspection.value = response.payload;
   grantedImportCapabilities.value = response.payload.permissions.map((permission) => permission.capability);
+  pluginImportChoices.value = Object.fromEntries(response.payload.pluginConflicts.map((conflict) => [
+    conflict.id,
+    conflict.canUsePackage ? "usePackage" : conflict.canKeepInstalled ? "keepInstalled" : "",
+  ]).filter((entry) => entry[1])) as Record<string, "keepInstalled" | "usePackage">;
   showPermissionDialog.value = true;
 }
 
@@ -1854,12 +1597,52 @@ async function confirmPermissionDialog() {
   }
   const kind = pendingImportKind.value;
   const token = pendingInspection.value.token;
+  if (!canConfirmImport.value) {
+    announceToast(pendingInspection.value.missingPluginIds.length ? "导入包缺少必要的插件依赖" : "请先处理全部插件版本冲突");
+    return;
+  }
   pendingImportKind.value = null;
   showPermissionDialog.value = false;
-  const response = await sendShell<PackageImportResult>("workspace.confirmImport", { token, grantedCapabilities: grantedImportCapabilities.value });
+  const response = await sendShell<PackageImportResult>("workspace.confirmImport", {
+    token,
+    grantedCapabilities: grantedImportCapabilities.value,
+    pluginChoices: pluginImportChoices.value,
+  });
   pendingInspection.value = null;
+  pluginImportChoices.value = {};
   workspace.toast = response.ok ? `${kind === "Component" ? "组件" : kind === "Page" ? "页面" : "方案"}导入完成，授权已保存` : response.message ?? "导入失败";
   await loadWorkspace();
+  if (response.ok) await rebuildImportedCodeComponents();
+}
+
+async function buildCodeComponentArtifact(files: Record<string, string>, entryFile: string) {
+  // 编译器按需加载，避免 20 MiB 的 SFC/WASM 工具链影响日常管理页面启动速度。
+  const { compileCodeComponent } = await import("./componentCompiler");
+  return compileCodeComponent(files, entryFile);
+}
+
+async function rebuildImportedCodeComponents() {
+  const codeComponents = workspace.components.filter((component) => String(component.editMode).toLowerCase() === "code");
+  for (const component of codeComponents) {
+    const fileResponse = await sendShell<Record<string, string>>("workspace.readComponentFiles", { id: component.id });
+    if (!fileResponse.ok || !fileResponse.payload) {
+      announceToast(`代码组件 ${component.name} 文件读取失败`);
+      continue;
+    }
+    try {
+      const artifact = await buildCodeComponentArtifact(fileResponse.payload, component.entryFile);
+      const files = {
+        ...fileResponse.payload,
+        [artifact.manifest.codeFile]: artifact.code,
+        [artifact.manifest.styleFile]: artifact.style,
+        "dist/onedesk.runtime.json": JSON.stringify(artifact.manifest, null, 2),
+      };
+      const saveResponse = await sendShell("workspace.saveComponentFiles", { id: component.id, files });
+      if (!saveResponse.ok) announceToast(`代码组件 ${component.name} 构建产物保存失败`);
+    } catch (error) {
+      announceToast(`代码组件 ${component.name} 构建失败：${error instanceof Error ? error.message : "未知错误"}`);
+    }
+  }
 }
 
 function changePermissionSource(value: string) {
@@ -1875,6 +1658,7 @@ function closePermissionDialog() {
   pendingImportKind.value = null;
   pendingPluginImport.value = false;
   pendingInspection.value = null;
+  pluginImportChoices.value = {};
   showPermissionDialog.value = false;
 }
 
@@ -1895,6 +1679,7 @@ async function importPlugin() {
   }
   pendingInspection.value = response.payload;
   grantedImportCapabilities.value = response.payload.permissions.map((permission) => permission.capability);
+  pluginImportChoices.value = {};
   showPermissionDialog.value = true;
 }
 
@@ -2879,6 +2664,19 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
         </div>
         <p class="mt-3 text-[12px] leading-5 text-slate-500">导入或安装前会按照能力目录授权，默认同意；高危权限会明确标记，后续可在设置里修改。</p>
         <div v-if="pendingInspection?.pluginDependencies.length" class="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-[12px] text-amber-700 dark:bg-amber-950/40 dark:text-amber-200">依赖插件：{{ pendingInspection.pluginDependencies.map((item) => `${item.id}@${item.version}`).join(' / ') }}</div>
+        <div v-if="pendingInspection?.missingPluginIds.length" class="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-[12px] leading-5 text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">
+          导入包未携带且本机未安装：{{ pendingInspection.missingPluginIds.join('、') }}
+        </div>
+        <div v-if="pendingInspection?.pluginConflicts.length" class="mt-3 grid gap-2">
+          <section v-for="conflict in pendingInspection.pluginConflicts" :key="conflict.id" class="rounded-2xl bg-slate-50 px-3 py-2.5 text-[12px] dark:bg-slate-900">
+            <div class="font-medium">{{ conflict.id }}</div>
+            <div class="mt-1 text-slate-500">依赖 {{ conflict.requiredVersion }} · 已安装 {{ conflict.installedVersion || '无' }} · 包内 {{ conflict.packagedVersion || '无' }}</div>
+            <div class="mt-2 grid grid-cols-2 gap-2">
+              <button v-if="conflict.canKeepInstalled" class="rounded-xl border px-3 py-2" :class="pluginImportChoices[conflict.id] === 'keepInstalled' ? 'border-sky-500 bg-sky-50 text-sky-600 dark:bg-sky-950/50' : 'border-slate-200 dark:border-slate-700'" @click="pluginImportChoices[conflict.id] = 'keepInstalled'">保留已安装版本</button>
+              <button v-if="conflict.canUsePackage" class="rounded-xl border px-3 py-2" :class="pluginImportChoices[conflict.id] === 'usePackage' ? 'border-sky-500 bg-sky-50 text-sky-600 dark:bg-sky-950/50' : 'border-slate-200 dark:border-slate-700'" @click="pluginImportChoices[conflict.id] = 'usePackage'">使用包内版本</button>
+            </div>
+          </section>
+        </div>
         <div class="mt-4 grid max-h-[300px] gap-2 overflow-auto pr-1" data-no-window-drag>
           <label v-for="permission in importPermissionRows" :key="permission.capability" class="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-2.5 text-[13px] dark:bg-slate-900">
             <input type="checkbox" :checked="grantedImportCapabilities.includes(permission.capability)" class="size-4 accent-sky-500" @change="toggleImportCapability(permission.capability)" />
@@ -2890,7 +2688,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           </label>
           <div v-if="!importPermissionRows.length" class="rounded-2xl bg-slate-50 px-3 py-2.5 text-[13px] text-slate-500 dark:bg-slate-900">当前对象没有声明额外权限。</div>
         </div>
-        <button class="mt-4 w-full rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white" @click="confirmPermissionDialog">{{ pendingImportKind || pendingPluginImport ? '授权并导入' : '确认授权' }}</button>
+        <button class="mt-4 w-full rounded-2xl bg-sky-500 py-2.5 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-50" :disabled="Boolean(pendingImportKind) && !canConfirmImport" @click="confirmPermissionDialog">{{ pendingImportKind || pendingPluginImport ? '授权并导入' : '确认授权' }}</button>
       </div>
     </div>
     <div v-if="showCodeSwitchDialog" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/28 p-6 backdrop-blur-sm">

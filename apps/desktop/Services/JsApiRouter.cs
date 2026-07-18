@@ -13,6 +13,7 @@ public sealed class JsApiRouter
     private readonly PluginHostService _plugins;
     private readonly OneDeskDataPaths _paths;
     private readonly QuicGatewayService _gateway;
+    private readonly IReadOnlyList<IDesktopCapabilityProvider> _desktopCapabilityProviders;
 
     public JsApiRouter(
         DeviceRegistry devices,
@@ -21,7 +22,8 @@ public sealed class JsApiRouter
         CapabilityDirectoryService capabilities,
         PluginHostService plugins,
         OneDeskDataPaths paths,
-        QuicGatewayService gateway)
+        QuicGatewayService gateway,
+        IEnumerable<IDesktopCapabilityProvider> desktopCapabilityProviders)
     {
         _devices = devices;
         _permissions = permissions;
@@ -30,10 +32,14 @@ public sealed class JsApiRouter
         _plugins = plugins;
         _paths = paths;
         _gateway = gateway;
+        _desktopCapabilityProviders = desktopCapabilityProviders.ToArray();
+        _plugins.ConfigureOriginatedRequestHandler(RoutePluginOriginatedRequestAsync);
     }
 
     public Task<JsApiResult> RouteAsync(JsApiRequest request, CancellationToken cancellationToken = default)
     {
+        // 协议目录是跨端能力 ID 的唯一事实源；旧 ID 只在入口处兼容，后续路由一律使用标准 ID。
+        request = request with { Capability = CapabilityDirectoryService.NormalizeId(request.Capability) };
         var target = _devices.Find(request.TargetDeviceId);
         if (target is null)
         {
@@ -72,6 +78,27 @@ public sealed class JsApiRouter
     private async Task<JsApiResult> ExecuteLocalAsync(JsApiRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var provider = _desktopCapabilityProviders.FirstOrDefault(candidate => candidate.CapabilityIds.Contains(request.Capability));
+        if (provider is not null)
+        {
+            try
+            {
+                return await provider.ExecuteAsync(request, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                _logs.Append(_devices.DesktopIdentity.DeviceId, "Error", "DesktopCapability", "桌面平台能力执行失败", new Dictionary<string, object?>
+                {
+                    ["capability"] = request.Capability,
+                    ["error"] = error.Message,
+                });
+                return JsApiResult.Error("ExecutionFailed", error.Message);
+            }
+        }
         return request.Capability switch
         {
             "device.identity" => JsApiResult.Success(_devices.DesktopIdentity),
@@ -79,16 +106,15 @@ public sealed class JsApiRouter
             "capability.list" => JsApiResult.Success(_capabilities.Categories()),
             "log.write" => WriteLog(request),
             "log.read" => JsApiResult.Success(_logs.Recent(ReadInt(request.Payload, "count", 200))),
-            "file.readPrivate" => await ReadPrivateFileAsync(request, cancellationToken),
-            "file.writePrivate" => await WritePrivateFileAsync(request, cancellationToken),
-            "file.deletePrivate" => DeletePrivateFile(request),
+            "file.private.read" => await ReadPrivateFileAsync(request, cancellationToken),
+            "file.private.write" => await WritePrivateFileAsync(request, cancellationToken),
+            "file.private.delete" => DeletePrivateFile(request),
             "plugin.invoke" => await InvokePluginAsync(request, cancellationToken),
             "notification.native" => Notify(request),
             "notification.inApp" => JsApiResult.Success(request.Payload),
             "process.list" => ListProcesses(),
             "network.access" => await NetworkAccessAsync(request, cancellationToken),
             "clipboard.read" or "clipboard.write" => JsApiResult.Error("CapabilityPlatformHandlerMissing", "Clipboard access must be executed by the platform shell handler."),
-            "file.readExternal" or "file.writeExternal" or "file.deleteExternal" => JsApiResult.Error("CapabilityRequiresUserPath", "External file access requires an explicit user-selected path and permission grant."),
             _ => JsApiResult.Error("CapabilityNotSupported", "This capability is registered but does not have a desktop local handler yet.")
         };
     }
@@ -186,6 +212,37 @@ public sealed class JsApiRouter
         return JsApiResult.Success(result);
     }
 
+    private async Task<object?> RoutePluginOriginatedRequestAsync(
+        string pluginId,
+        string method,
+        JsonElement parameters,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(method, "onedesk.jsapi", StringComparison.Ordinal))
+        {
+            return JsApiResult.Error("PluginHostMethodNotFound", "插件请求的宿主方法不存在。");
+        }
+
+        var targetDeviceId = ReadString(parameters, "targetDeviceId", _devices.DesktopIdentity.DeviceId);
+        var capability = ReadString(parameters, "capability", string.Empty);
+        if (string.IsNullOrWhiteSpace(capability))
+        {
+            return JsApiResult.Error("InvalidPayload", "onedesk.jsapi 需要 capability。");
+        }
+
+        var payload = parameters.TryGetProperty("payload", out var payloadElement)
+            ? payloadElement.Clone()
+            : JsonSerializer.SerializeToElement(new { });
+        return await RouteAsync(
+            new JsApiRequest(
+                $"plugin-{Guid.NewGuid():N}",
+                targetDeviceId,
+                new TrustedSource(null, null, null, pluginId, "plugin"),
+                capability,
+                payload),
+            cancellationToken);
+    }
+
     private static JsApiResult ListProcesses()
     {
         var processes = Process.GetProcesses()
@@ -279,6 +336,15 @@ public sealed class JsApiRouter
     {
         var value = ReadElement(payload, key);
         return value?.ValueKind == JsonValueKind.String ? value.Value.GetString() ?? fallback : fallback;
+    }
+
+    private static string ReadString(JsonElement payload, string key, string fallback)
+    {
+        return payload.ValueKind == JsonValueKind.Object &&
+               payload.TryGetProperty(key, out var value) &&
+               value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? fallback
+            : fallback;
     }
 
     private static int ReadInt(object? payload, string key, int fallback)

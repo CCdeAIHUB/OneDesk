@@ -1,11 +1,11 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using OneDesk.Desktop.Domain;
 using OneDesk.Desktop.Storage;
+using OneDesk.Desktop.Transport;
 
 namespace OneDesk.Desktop.Services;
 
@@ -17,22 +17,31 @@ public sealed class QuicGatewayService : IDisposable
     private readonly StructuredLogStore _logs;
     private readonly PairingService _pairing;
     private readonly OneDeskRepository _repository;
+    private readonly OneDeskDataPaths _paths;
+    private readonly PermissionService _permissions;
     private readonly ConcurrentDictionary<string, QuicPeerState> _peers = new();
     private readonly ConcurrentQueue<QueuedQuicRequest> _queuedRequests = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> _pendingSchemeAcks = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsApiResult>> _pendingJsApiResponses = new();
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
-    private CancellationTokenSource? _transportCts;
-    private UdpClient? _udp;
-    private Task? _receiveLoop;
+    private QuicServerIdentity? _transportIdentity;
+    private MsQuicServerTransport? _transport;
     private JsApiRouter? _jsApiRouter;
 
-    public QuicGatewayService(DeviceRegistry devices, StructuredLogStore logs, PairingService pairing, OneDeskRepository repository)
+    public QuicGatewayService(
+        DeviceRegistry devices,
+        StructuredLogStore logs,
+        PairingService pairing,
+        OneDeskRepository repository,
+        OneDeskDataPaths paths,
+        PermissionService permissions)
     {
         _devices = devices;
         _logs = logs;
         _pairing = pairing;
         _repository = repository;
+        _paths = paths;
+        _permissions = permissions;
     }
 
     public bool IsRunning { get; private set; }
@@ -49,44 +58,51 @@ public sealed class QuicGatewayService : IDisposable
         _jsApiRouter = router;
     }
 
-    public Task StartAsync(int port = 48320, CancellationToken cancellationToken = default)
+    public async Task StartAsync(int port = 48320, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (IsRunning)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        Port = port;
-        _transportCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _udp = new UdpClient(new IPEndPoint(IPAddress.Any, port));
+        _paths.EnsureCreated();
+        _transportIdentity = QuicServerIdentity.LoadOrCreate(_paths.TransportIdentity, "OneDesk Mobile Gateway");
+        _transport = new MsQuicServerTransport(_transportIdentity, HandleEnvelopeAsync);
+        _transport.TransportFaulted += HandleTransportFault;
+        _transport.SessionClosed += HandleSessionClosed;
+        await _transport.StartAsync(new IPEndPoint(IPAddress.Any, port), cancellationToken);
+        Port = _transport.BoundEndPoint.Port;
         IsRunning = true;
-        _receiveLoop = Task.Run(() => ReceiveLoopAsync(_transportCts.Token), CancellationToken.None);
         _logs.Append(_devices.DesktopIdentity.DeviceId, "Info", "Gateway", "Mobile gateway transport started", new Dictionary<string, object?>
         {
-            ["port"] = port,
-            ["transport"] = "udp-json-chunked"
+            ["port"] = Port,
+            ["transport"] = "msquic",
+            ["certificateFingerprint"] = _transportIdentity.Fingerprint
         });
-        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         IsRunning = false;
-        _transportCts?.Cancel();
-        _udp?.Dispose();
-        if (_receiveLoop is not null)
+        if (_transport is not null)
         {
             try
             {
-                await _receiveLoop.WaitAsync(TimeSpan.FromSeconds(2), cancellationToken);
+                await _transport.DisposeAsync();
             }
-            catch
+            catch (Exception error)
             {
-                // 释放套接字后接收循环会自行结束，停止流程不应阻塞窗口退出。
+                _logs.Append(_devices.DesktopIdentity.DeviceId, "Warning", "Gateway", "Mobile gateway shutdown failed", new Dictionary<string, object?>
+                {
+                    ["error"] = error.Message
+                });
             }
+            _transport = null;
         }
+        _transportIdentity?.Dispose();
+        _transportIdentity = null;
 
         _peers.Clear();
         foreach (var pending in _pendingSchemeAcks.Values)
@@ -102,18 +118,19 @@ public sealed class QuicGatewayService : IDisposable
         _logs.Append(_devices.DesktopIdentity.DeviceId, "Info", "Gateway", "Mobile gateway stopped");
     }
 
-    public void RegisterPeer(DeviceIdentity identity, IPEndPoint endpoint, string trustCredentialHash)
+    public void RegisterPeer(DeviceIdentity identity, MobileGatewaySession session, string trustCredentialHash)
     {
-        _peers[identity.DeviceId] = new QuicPeerState(identity.DeviceId, endpoint.ToString(), true, DateTimeOffset.UtcNow, trustCredentialHash);
+        _peers[identity.DeviceId] = new QuicPeerState(identity.DeviceId, session.Id, session.RemoteEndPoint.ToString() ?? "unknown", true, DateTimeOffset.UtcNow, trustCredentialHash);
         _logs.Append(_devices.DesktopIdentity.DeviceId, "Info", "Gateway", "Registered mobile gateway peer", new Dictionary<string, object?>
         {
             ["deviceId"] = identity.DeviceId,
-            ["endpoint"] = endpoint.ToString()
+            ["endpoint"] = session.RemoteEndPoint.ToString(),
+            ["sessionId"] = session.Id
         });
     }
 
-    // 方案分块和资源下载使用短生命周期 UDP 端口。此处只刷新在线状态，避免覆盖服务端主动推送所需的订阅端口。
-    private void TouchPeer(DeviceIdentity identity, IPEndPoint fallbackEndpoint, string trustCredentialHash)
+    // 每个请求流都复用同一条 QUIC 连接；刷新状态时必须同步会话 ID，重连后推送才会发往新连接。
+    private void TouchPeer(DeviceIdentity identity, MobileGatewaySession session, string trustCredentialHash)
     {
         if (_peers.TryGetValue(identity.DeviceId, out var current))
         {
@@ -121,12 +138,14 @@ public sealed class QuicGatewayService : IDisposable
             {
                 Online = true,
                 LastSeenAt = DateTimeOffset.UtcNow,
-                TrustCredentialHash = trustCredentialHash
+                TrustCredentialHash = trustCredentialHash,
+                SessionId = session.Id,
+                Endpoint = session.RemoteEndPoint.ToString() ?? "unknown"
             };
             return;
         }
 
-        RegisterPeer(identity, fallbackEndpoint, trustCredentialHash);
+        RegisterPeer(identity, session, trustCredentialHash);
     }
 
     public bool IsOnline(string deviceId)
@@ -136,13 +155,13 @@ public sealed class QuicGatewayService : IDisposable
 
     public async Task<SchemePushResult> PushSchemeUpdateAsync(string deviceId, CancellationToken cancellationToken = default)
     {
-        if (_udp is null || !IsRunning || !_peers.TryGetValue(deviceId, out var storedPeer))
+        if (_transport is null || !IsRunning || !_peers.TryGetValue(deviceId, out var storedPeer))
         {
             return new SchemePushResult(false, false, "设备当前离线，方案已记录并将在下次连接时同步");
         }
 
         var peer = CurrentPeerState(storedPeer);
-        if (!peer.Online || !IPEndPoint.TryParse(peer.Endpoint, out var endpoint))
+        if (!peer.Online)
         {
             return new SchemePushResult(false, false, "设备当前离线，方案已记录并将在下次连接时同步");
         }
@@ -160,8 +179,7 @@ public sealed class QuicGatewayService : IDisposable
                 deviceId,
                 scheme = snapshot.Descriptor
             });
-            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message, _jsonOptions));
-            await _udp.SendAsync(bytes, bytes.Length, endpoint);
+            await _transport.SendEventAsync(peer.SessionId, CreateEventEnvelope(message), cancellationToken);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             // 确认代表移动端已经完整下载并原子替换缓存；视频等大资源不能沿用普通请求的短超时。
             timeout.CancelAfter(TimeSpan.FromSeconds(90));
@@ -172,6 +190,11 @@ public sealed class QuicGatewayService : IDisposable
         {
             return new SchemePushResult(true, false, "方案已记录，但在线设备未在规定时间内确认接收");
         }
+        catch (InvalidOperationException error) when (error.Message == "GatewaySessionOffline")
+        {
+            MarkSessionOffline(peer.SessionId);
+            return new SchemePushResult(false, false, "设备连接已断开，方案将在下次连接时同步");
+        }
         finally
         {
             _pendingSchemeAcks.TryRemove(eventId, out _);
@@ -181,7 +204,7 @@ public sealed class QuicGatewayService : IDisposable
     public async Task<JsApiResult> ForwardJsApiAsync(JsApiRequest request, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (_udp is null || !IsRunning)
+        if (_transport is null || !IsRunning)
         {
             return JsApiResult.Error("GatewayOffline", "移动网关未运行。");
         }
@@ -192,7 +215,7 @@ public sealed class QuicGatewayService : IDisposable
         }
 
         var peer = CurrentPeerState(storedPeer);
-        if (!peer.Online || !IPEndPoint.TryParse(peer.Endpoint, out var endpoint))
+        if (!peer.Online)
         {
             return JsApiResult.Error("TargetOffline", "目标移动设备未连接。");
         }
@@ -213,10 +236,10 @@ public sealed class QuicGatewayService : IDisposable
                 request.RequestId,
                 request.TargetDeviceId,
                 request.Capability,
-                request.Payload
+                request.Payload,
+                source = request.Source
             });
-            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message, _jsonOptions));
-            await _udp.SendAsync(bytes, bytes.Length, endpoint);
+            await _transport.SendEventAsync(peer.SessionId, CreateEventEnvelope(message), cancellationToken);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(7));
             return await responseSource.Task.WaitAsync(timeout.Token);
@@ -225,73 +248,65 @@ public sealed class QuicGatewayService : IDisposable
         {
             return JsApiResult.Error("TargetNoResponse", "目标移动设备未在规定时间内返回 JSAPI 结果。");
         }
+        catch (InvalidOperationException error) when (error.Message == "GatewaySessionOffline")
+        {
+            MarkSessionOffline(peer.SessionId);
+            return JsApiResult.Error("TargetOffline", "目标移动设备连接已断开。");
+        }
         finally
         {
             _pendingJsApiResponses.TryRemove(request.RequestId, out _);
         }
     }
 
-    private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested && _udp is not null)
-        {
-            try
-            {
-                var packet = await _udp.ReceiveAsync(cancellationToken);
-                _ = Task.Run(() => HandlePacketAsync(packet, cancellationToken), cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (ObjectDisposedException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logs.Append(_devices.DesktopIdentity.DeviceId, "Error", "Gateway", "Gateway receive loop failed", new Dictionary<string, object?> { ["error"] = ex.Message });
-            }
-        }
-    }
-
-    private async Task HandlePacketAsync(UdpReceiveResult packet, CancellationToken cancellationToken)
+    private async ValueTask<MobileGatewayEnvelope?> HandleEnvelopeAsync(
+        MobileGatewaySession session,
+        MobileGatewayEnvelope envelope,
+        CancellationToken cancellationToken)
     {
         GatewayResponse response;
         try
         {
-            var text = Encoding.UTF8.GetString(packet.Buffer);
-            var request = JsonSerializer.Deserialize<GatewayRequest>(text, _jsonOptions) ?? throw new InvalidDataException("Invalid gateway request.");
+            if (envelope.ProtocolVersion != 1 || !string.Equals(envelope.MessageType, "request", StringComparison.Ordinal))
+            {
+                throw new InvalidDataException("UnsupportedGatewayEnvelope");
+            }
+            var request = envelope.Payload.Deserialize<GatewayRequest>(_jsonOptions)
+                ?? throw new InvalidDataException("InvalidGatewayRequest");
             response = request.Type switch
             {
-                "pair" => await HandlePairAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "connect" => await HandleTrustedConnectAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "subscribe" or "heartbeat" => await HandleSubscriptionAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "scheme" => await HandleSchemeRequestAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "scheme-chunk" => await HandleSchemeChunkAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "scheme-ack" => HandleSchemeAcknowledgement(request, packet.RemoteEndPoint),
-                "asset" => await HandleAssetRequestAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "logs" => HandleMobileLogs(request, packet.RemoteEndPoint),
-                "jsapi" => await HandleJsApiRequestAsync(request, packet.RemoteEndPoint, cancellationToken),
-                "jsapi-response" => HandleJsApiResponse(request, packet.RemoteEndPoint),
+                "pair" => await HandlePairAsync(request, session, cancellationToken),
+                "connect" => await HandleTrustedConnectAsync(request, session, cancellationToken),
+                "subscribe" or "heartbeat" => await HandleSubscriptionAsync(request, session, cancellationToken),
+                "scheme" => await HandleSchemeRequestAsync(request, session, cancellationToken),
+                "scheme-chunk" => await HandleSchemeChunkAsync(request, session, cancellationToken),
+                "scheme-ack" => HandleSchemeAcknowledgement(request, session),
+                "asset" => await HandleAssetRequestAsync(request, session, cancellationToken),
+                "logs" => HandleMobileLogs(request, session),
+                "jsapi" => await HandleJsApiRequestAsync(request, session, cancellationToken),
+                "jsapi-response" => HandleJsApiResponse(request, session),
                 _ => GatewayResponse.Fail("UnsupportedRequest", "不支持的网关请求")
             };
         }
-        catch (Exception ex)
+        catch (Exception error)
         {
-            response = GatewayResponse.Fail("InvalidRequest", ex.Message);
+            _logs.Append(_devices.DesktopIdentity.DeviceId, "Warning", "Gateway", "Invalid mobile gateway request", new Dictionary<string, object?>
+            {
+                ["sessionId"] = session.Id,
+                ["error"] = error.Message
+            });
+            response = GatewayResponse.Fail("InvalidRequest", error.Message);
         }
 
-        if (_udp is null)
-        {
-            return;
-        }
-
-        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(response, _jsonOptions));
-        await _udp.SendAsync(bytes, bytes.Length, packet.RemoteEndPoint);
+        return new MobileGatewayEnvelope(
+            1,
+            "response",
+            $"response-{Guid.NewGuid():N}",
+            envelope.MessageId,
+            JsonSerializer.SerializeToElement(response, _jsonOptions));
     }
 
-    private async Task<GatewayResponse> HandlePairAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandlePairAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Code) || !_pairing.ValidateCode(request.Code))
         {
@@ -303,7 +318,7 @@ public sealed class QuicGatewayService : IDisposable
             string.IsNullOrWhiteSpace(request.Platform) ? "android" : request.Platform,
             string.IsNullOrWhiteSpace(request.Architecture) ? "unknown" : request.Architecture);
         var credential = _pairing.CreateTrustCredential(identity.DeviceId, identity.DisplayName);
-        RegisterPeer(identity, remote, HashToken(credential.Token));
+        RegisterPeer(identity, session, HashToken(credential.Token));
         AppendMobileLogs(identity.DeviceId, request.Logs);
         var snapshot = await BuildSchemeSnapshotAsync(identity.DeviceId, cancellationToken);
         return GatewayResponse.Success(new
@@ -315,7 +330,7 @@ public sealed class QuicGatewayService : IDisposable
         });
     }
 
-    private async Task<GatewayResponse> HandleTrustedConnectAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandleTrustedConnectAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (!ValidateTrustedRequest(request))
         {
@@ -323,7 +338,7 @@ public sealed class QuicGatewayService : IDisposable
         }
 
         var identity = EnsureMobileIdentity(request);
-        RegisterPeer(identity, remote, HashToken(request.TrustCredential!));
+        RegisterPeer(identity, session, HashToken(request.TrustCredential!));
         AppendMobileLogs(identity.DeviceId, request.Logs);
         var snapshot = await BuildSchemeSnapshotAsync(identity.DeviceId, cancellationToken);
         return GatewayResponse.Success(new
@@ -334,7 +349,7 @@ public sealed class QuicGatewayService : IDisposable
         });
     }
 
-    private async Task<GatewayResponse> HandleSubscriptionAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandleSubscriptionAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (!ValidateTrustedRequest(request))
         {
@@ -346,36 +361,36 @@ public sealed class QuicGatewayService : IDisposable
         // 首次订阅需要保存用于服务端主动推送的端点；心跳只刷新在线时间，避免日志刷屏。
         if (string.Equals(request.Type, "heartbeat", StringComparison.Ordinal))
         {
-            TouchPeer(identity, remote, trustCredentialHash);
+            TouchPeer(identity, session, trustCredentialHash);
         }
         else
         {
-            RegisterPeer(identity, remote, trustCredentialHash);
+            RegisterPeer(identity, session, trustCredentialHash);
         }
         var snapshot = await BuildSchemeSnapshotAsync(identity.DeviceId, cancellationToken);
         return GatewayResponse.Success(new { subscribed = true, scheme = snapshot.Descriptor });
     }
 
-    private async Task<GatewayResponse> HandleSchemeRequestAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandleSchemeRequestAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (!ValidateTrustedRequest(request))
         {
             return GatewayResponse.Fail("InvalidTrustCredential", "长期信任凭据无效");
         }
 
-        TouchPeer(EnsureMobileIdentity(request), remote, HashToken(request.TrustCredential!));
+        TouchPeer(EnsureMobileIdentity(request), session, HashToken(request.TrustCredential!));
         var snapshot = await BuildSchemeSnapshotAsync(request.DeviceId!, cancellationToken);
         return GatewayResponse.Success(new { scheme = snapshot.Descriptor });
     }
 
-    private async Task<GatewayResponse> HandleSchemeChunkAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandleSchemeChunkAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (!ValidateTrustedRequest(request))
         {
             return GatewayResponse.Fail("InvalidTrustCredential", "长期信任凭据无效");
         }
 
-        TouchPeer(EnsureMobileIdentity(request), remote, HashToken(request.TrustCredential!));
+        TouchPeer(EnsureMobileIdentity(request), session, HashToken(request.TrustCredential!));
         var snapshot = await BuildSchemeSnapshotAsync(request.DeviceId!, cancellationToken);
         if (!string.IsNullOrWhiteSpace(request.Hash) && !string.Equals(request.Hash, snapshot.Hash, StringComparison.OrdinalIgnoreCase))
         {
@@ -397,14 +412,14 @@ public sealed class QuicGatewayService : IDisposable
         });
     }
 
-    private GatewayResponse HandleSchemeAcknowledgement(GatewayRequest request, IPEndPoint remote)
+    private GatewayResponse HandleSchemeAcknowledgement(GatewayRequest request, MobileGatewaySession session)
     {
         if (!ValidateTrustedRequest(request) || string.IsNullOrWhiteSpace(request.EventId))
         {
             return GatewayResponse.Fail("InvalidAcknowledgement", "方案确认信息无效");
         }
 
-        TouchPeer(EnsureMobileIdentity(request), remote, HashToken(request.TrustCredential!));
+        TouchPeer(EnsureMobileIdentity(request), session, HashToken(request.TrustCredential!));
         if (_pendingSchemeAcks.TryRemove(request.EventId, out var pending))
         {
             pending.TrySetResult(true);
@@ -412,7 +427,7 @@ public sealed class QuicGatewayService : IDisposable
         return GatewayResponse.Success(new { acknowledged = true, request.EventId });
     }
 
-    private async Task<GatewayResponse> HandleAssetRequestAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandleAssetRequestAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (!ValidateTrustedRequest(request))
         {
@@ -427,7 +442,7 @@ public sealed class QuicGatewayService : IDisposable
             return GatewayResponse.Fail("AssetNotAuthorized", "资源不属于当前设备已分配方案");
         }
 
-        TouchPeer(EnsureMobileIdentity(request), remote, HashToken(request.TrustCredential!));
+        TouchPeer(EnsureMobileIdentity(request), session, HashToken(request.TrustCredential!));
         var chunk = await _repository.ReadSchemeAssetChunkAsync(
             request.OwnerKind,
             request.OwnerId,
@@ -448,7 +463,7 @@ public sealed class QuicGatewayService : IDisposable
             });
     }
 
-    private GatewayResponse HandleMobileLogs(GatewayRequest request, IPEndPoint remote)
+    private GatewayResponse HandleMobileLogs(GatewayRequest request, MobileGatewaySession session)
     {
         if (!ValidateTrustedRequest(request))
         {
@@ -456,12 +471,12 @@ public sealed class QuicGatewayService : IDisposable
         }
 
         var identity = EnsureMobileIdentity(request);
-        TouchPeer(identity, remote, HashToken(request.TrustCredential!));
+        TouchPeer(identity, session, HashToken(request.TrustCredential!));
         AppendMobileLogs(identity.DeviceId, request.Logs);
         return GatewayResponse.Success(new { accepted = request.Logs?.Count ?? 0 });
     }
 
-    private async Task<GatewayResponse> HandleJsApiRequestAsync(GatewayRequest request, IPEndPoint remote, CancellationToken cancellationToken)
+    private async Task<GatewayResponse> HandleJsApiRequestAsync(GatewayRequest request, MobileGatewaySession session, CancellationToken cancellationToken)
     {
         if (!ValidateTrustedRequest(request))
         {
@@ -480,7 +495,7 @@ public sealed class QuicGatewayService : IDisposable
             return GatewayResponse.Fail("InvalidComponentSource", "组件不属于当前设备已分配方案");
         }
 
-        TouchPeer(EnsureMobileIdentity(request), remote, HashToken(request.TrustCredential!));
+        TouchPeer(EnsureMobileIdentity(request), session, HashToken(request.TrustCredential!));
         var targetDeviceId = string.Equals(request.TargetDeviceId, "desktop", StringComparison.OrdinalIgnoreCase)
             ? _devices.DesktopIdentity.DeviceId
             : request.TargetDeviceId!;
@@ -496,14 +511,14 @@ public sealed class QuicGatewayService : IDisposable
             : GatewayResponse.Fail(result.ErrorCode ?? "JsApiFailed", result.Message ?? "JSAPI 调用失败");
     }
 
-    private GatewayResponse HandleJsApiResponse(GatewayRequest request, IPEndPoint remote)
+    private GatewayResponse HandleJsApiResponse(GatewayRequest request, MobileGatewaySession session)
     {
         if (!ValidateTrustedRequest(request) || string.IsNullOrWhiteSpace(request.RequestId))
         {
             return GatewayResponse.Fail("InvalidJsApiResponse", "移动端 JSAPI 响应身份无效");
         }
 
-        TouchPeer(EnsureMobileIdentity(request), remote, HashToken(request.TrustCredential!));
+        TouchPeer(EnsureMobileIdentity(request), session, HashToken(request.TrustCredential!));
         if (_pendingJsApiResponses.TryRemove(request.RequestId, out var pending))
         {
             var result = request.ResponseOk == true
@@ -547,6 +562,8 @@ public sealed class QuicGatewayService : IDisposable
         {
             var files = await _repository.ReadComponentFilesAsync(component.Id, cancellationToken);
             JsonElement? visualConfig = null;
+            CodeComponentRuntimeArtifact? codeRuntime = null;
+            string? codeRuntimeError = null;
             if (files.TryGetValue("onedesk.visual.json", out var visualJson) && !string.IsNullOrWhiteSpace(visualJson))
             {
                 try
@@ -563,11 +580,26 @@ public sealed class QuicGatewayService : IDisposable
                     });
                 }
             }
-            componentBundles.Add(new { definition = component, visualConfig });
+            if (component.EditMode == ComponentEditMode.Code &&
+                !CodeComponentArtifactValidator.TryRead(files, out codeRuntime, out codeRuntimeError))
+            {
+                _logs.Append(_devices.DesktopIdentity.DeviceId, "Warning", "Scheme", "Code component runtime artifact is invalid", new Dictionary<string, object?>
+                {
+                    ["componentId"] = component.Id,
+                    ["errorCode"] = codeRuntimeError
+                });
+            }
+            componentBundles.Add(new { definition = component, visualConfig, codeRuntime, codeRuntimeError });
         }
 
         var actionIds = components.SelectMany(component => component.ActionIds).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var actions = (await _repository.ListActionsAsync(cancellationToken)).Where(action => actionIds.Contains(action.Id)).ToArray();
+        var componentSourceKeys = components
+            .Select(component => $"component:{component.Id}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var permissionGrants = _permissions.ListGrants()
+            .Where(grant => componentSourceKeys.Contains(grant.SourceKey))
+            .ToArray();
         var payload = new
         {
             activeSchemeId = active?.SchemeId,
@@ -575,7 +607,8 @@ public sealed class QuicGatewayService : IDisposable
             scheme,
             pages,
             components = componentBundles,
-            actions
+            actions,
+            permissionGrants
         };
         var json = JsonSerializer.Serialize(payload, _jsonOptions);
         var bytes = Encoding.UTF8.GetBytes(json);
@@ -666,6 +699,45 @@ public sealed class QuicGatewayService : IDisposable
         return online == peer.Online ? peer : peer with { Online = online };
     }
 
+    private MobileGatewayEnvelope CreateEventEnvelope(GatewayResponse message)
+    {
+        return new MobileGatewayEnvelope(
+            1,
+            "event",
+            $"event-{Guid.NewGuid():N}",
+            null,
+            JsonSerializer.SerializeToElement(message, _jsonOptions));
+    }
+
+    private void HandleSessionClosed(string sessionId)
+    {
+        MarkSessionOffline(sessionId);
+    }
+
+    private void MarkSessionOffline(string sessionId)
+    {
+        foreach (var pair in _peers.Where(pair => string.Equals(pair.Value.SessionId, sessionId, StringComparison.Ordinal)))
+        {
+            if (_peers.TryUpdate(pair.Key, pair.Value with { Online = false }, pair.Value))
+            {
+                _logs.Append(_devices.DesktopIdentity.DeviceId, "Info", "Gateway", "Mobile gateway peer disconnected", new Dictionary<string, object?>
+                {
+                    ["deviceId"] = pair.Key,
+                    ["sessionId"] = sessionId
+                });
+            }
+        }
+    }
+
+    private void HandleTransportFault(Exception error)
+    {
+        _logs.Append(_devices.DesktopIdentity.DeviceId, "Error", "Gateway", "MsQuic transport fault", new Dictionary<string, object?>
+        {
+            ["error"] = error.Message,
+            ["exceptionType"] = error.GetType().FullName
+        });
+    }
+
     private static string ReadLogString(JsonElement log, string key, string fallback)
     {
         return log.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
@@ -680,9 +752,7 @@ public sealed class QuicGatewayService : IDisposable
 
     public void Dispose()
     {
-        _transportCts?.Cancel();
-        _udp?.Dispose();
-        _transportCts?.Dispose();
+        StopAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 }
 
@@ -719,7 +789,7 @@ public sealed record GatewayResponse(bool Ok, object? Payload, string? ErrorCode
     public static GatewayResponse Fail(string code, string message) => new(false, null, code, message);
 }
 
-public sealed record QuicPeerState(string DeviceId, string Endpoint, bool Online, DateTimeOffset LastSeenAt, string TrustCredentialHash);
+public sealed record QuicPeerState(string DeviceId, string SessionId, string Endpoint, bool Online, DateTimeOffset LastSeenAt, string TrustCredentialHash);
 public sealed record QueuedQuicRequest(string RequestId, string TargetDeviceId, string Capability, DateTimeOffset CreatedAt);
 public sealed record SchemeDescriptor(string Version, string Hash, long TotalBytes, bool HasScheme);
 public sealed record SchemeTransportSnapshot(string Version, string Hash, byte[] Bytes, SchemeDescriptor Descriptor);

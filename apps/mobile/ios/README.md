@@ -1,11 +1,24 @@
-# OneDesk iOS Shell
+# OneDesk iOS 客户端
 
-The iOS shell is part of the current OneDesk product scope. Routine validation currently targets Android only, so this folder contains the Swift/WKWebView shell source skeleton and integration notes.
+该目录包含 SwiftUI + WKWebView 移动壳、MsQuic 原生适配、扫码配对、长期信任、断联日志、原子方案缓存和 JSAPI 路由的正式源码。
 
-## Runtime Rules
+## 构建
 
-- Load the mobile Vue frontend from app-bundled files.
-- Block remote navigation and remote resource requests where WKWebView allows it.
-- Expose JSAPI through `WKScriptMessageHandler`.
-- Return `CapabilityNotSupported` for unsupported iOS capabilities.
-- Route non-local JSAPI calls through the connected desktop gateway.
+需要 macOS、Xcode 16、CMake、pnpm，以及已经初始化的 `third_party/msquic` 子模块。
+
+```bash
+open apps/mobile/ios/OneDesk.xcodeproj
+```
+
+Xcode 的“准备前端与 MsQuic”构建阶段会先构建 `frontends/mobile`，再为当前真机或模拟器架构编译 MsQuic 静态库。也可以单独执行：
+
+```bash
+apps/mobile/ios/scripts/prepare-ios-dependencies.sh
+```
+
+## 安全边界
+
+- Vue 入口只从应用包内的 `file://` 加载。
+- CSP、注入脚本和 WKNavigationDelegate 共同阻止前端直接联网。
+- 长期信任凭据只保存在 Keychain，不返回给前端。
+- 不支持的 iOS 能力返回 `CapabilityNotSupported`，不会伪造成功。

@@ -19,17 +19,17 @@
   <ItemGroup>
     <Compile Include="..\desktop\Domain\*.cs" LinkBase="Domain" />
     <Compile Include="..\desktop\Storage\*.cs" LinkBase="Storage" />
-    <Compile Include="..\desktop\Services\Models.cs" Link="Services\Models.cs" />
-    <Compile Include="..\desktop\Services\CapabilityDirectoryService.cs" Link="Services\CapabilityDirectoryService.cs" />
-    <Compile Include="..\desktop\Services\DeviceRegistry.cs" Link="Services\DeviceRegistry.cs" />
-    <Compile Include="..\desktop\Services\FrontendNetworkPolicy.cs" Link="Services\FrontendNetworkPolicy.cs" />
-    <Compile Include="..\desktop\Services\JsApiRouter.cs" Link="Services\JsApiRouter.cs" />
-    <Compile Include="..\desktop\Services\PairingService.cs" Link="Services\PairingService.cs" />
-    <Compile Include="..\desktop\Services\PermissionService.cs" Link="Services\PermissionService.cs" />
-    <Compile Include="..\desktop\Services\PluginHostService.cs" Link="Services\PluginHostService.cs" />
-    <Compile Include="..\desktop\Services\QuicGatewayService.cs" Link="Services\QuicGatewayService.cs" />
-    <Compile Include="..\desktop\Services\SchemePackageService.cs" Link="Services\SchemePackageService.cs" />
-    <Compile Include="..\desktop\Services\StructuredLogStore.cs" Link="Services\StructuredLogStore.cs" />
+    <Compile Include="..\desktop\Services\*.cs" LinkBase="Services" />
+    <Compile Include="..\desktop\Transport\*.cs" LinkBase="Transport" />
+    <Compile Include="..\desktop\Protocol\*.cs" LinkBase="Protocol" />
+    <Compile Include="..\desktop\Shell\BridgeContracts.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\DesktopBridgeDispatcher.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\DesktopBridgeDispatcher.Devices.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\DesktopBridgeDispatcher.Imports.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\DesktopBridgeDispatcher.Plugins.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\DesktopBridgeDispatcher.Workspace.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\IDesktopShellPlatform.cs" LinkBase="Shell" />
+    <Compile Include="..\desktop\Shell\PortableDesktopSettingsService.cs" LinkBase="Shell" />
   </ItemGroup>
 
   <ItemGroup>
@@ -38,4 +38,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
+  <Target Name="RemoveUnusedWebView2WpfReference" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <!-- WebView2 包会同时注入 WPF 和 WinForms 引用；本项目只使用 WinForms，移除 WPF 可避免 WindowsBase 版本冲突。 -->
+      <Reference Remove="@(Reference)" Condition="'%(Reference.Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 </Project>

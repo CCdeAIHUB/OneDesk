@@ -3,25 +3,17 @@ package cc.onedesk.mobile
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.util.Log
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
@@ -29,13 +21,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.time.Instant
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     companion object {
-        private const val CACHE_SCHEMA_VERSION = 4
+        private const val CACHE_SCHEMA_VERSION = 5
     }
 
     private lateinit var root: FrameLayout
@@ -43,6 +34,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var logs: MobileLogStore
     private lateinit var gateway: MobileGatewayClient
     private lateinit var schemeCache: SchemeCacheService
+    private lateinit var capabilityExecutor: AndroidLocalCapabilityExecutor
+    private lateinit var consentCoordinator: AndroidConsentCoordinator
+    private lateinit var trustCredentials: TrustCredentialStore
+    private lateinit var knownDesktops: KnownDesktopStore
+    private lateinit var deviceTriggers: AndroidDeviceTriggerMonitor
     private lateinit var scanner: QrScannerController
     private val prefs by lazy { getSharedPreferences("onedesk-mobile", Context.MODE_PRIVATE) }
     private val localDeviceId by lazy {
@@ -57,17 +53,38 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         createNotificationChannel()
+        trustCredentials = TrustCredentialStore(this)
+        logs = MobileLogStore(prefs) { currentDeviceId() }
+        knownDesktops = KnownDesktopStore(prefs, trustCredentials, logs)
+        knownDesktops.migratePlaintextCredentials()
         clearOutdatedCache()
         enableImmersiveMode()
 
-        logs = MobileLogStore(prefs) { currentDeviceId() }
         gateway = MobileGatewayClient(
             deviceId = { currentDeviceId() },
             logs = logs,
             onSchemeEvent = { desktop, descriptor, eventId -> handleSchemeEvent(desktop, descriptor, eventId) },
-            onJsApiEvent = { capability, payload, requestId -> executeLocalCapability(capability, payload.toString(), requestId) },
+            onJsApiEvent = { capability, payload, requestId, sourceKey ->
+                // 远端来源已由桌面网关完成权限判定；移动端仍保留来源键用于私有存储隔离。
+                executeLocalCapability(capability, payload.toString(), requestId, sourceKey, enforcePermission = false)
+            },
         )
         schemeCache = SchemeCacheService(this, prefs, gateway, logs)
+        consentCoordinator = AndroidConsentCoordinator(this)
+        capabilityExecutor = AndroidLocalCapabilityExecutor(
+            this,
+            logs,
+            AndroidCapabilityEnvironment(
+                deviceId = { currentDeviceId() },
+                activeScheme = { activeSchemeSnapshot() },
+                switchSchemePage = { payload -> dispatchFrontendEvent("__oneDeskHandlePageSwitch", payload) },
+                showInAppNotification = { payload -> dispatchFrontendEvent("__oneDeskHandleInAppNotification", payload) },
+            ),
+            consentCoordinator,
+        )
+        deviceTriggers = AndroidDeviceTriggerMonitor(this) { triggerId ->
+            dispatchFrontendEvent("__oneDeskHandleDeviceTrigger", JSONObject().put("triggerId", triggerId))
+        }
 
         root = FrameLayout(this)
         webView = WebView(this)
@@ -96,9 +113,21 @@ class MainActivity : ComponentActivity() {
         if (hasFocus) enableImmersiveMode()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::deviceTriggers.isInitialized) deviceTriggers.start()
+    }
+
+    override fun onPause() {
+        if (::deviceTriggers.isInitialized) deviceTriggers.stop()
+        super.onPause()
+    }
+
     override fun onDestroy() {
         scanner.destroy()
-        gateway.stopSubscription()
+        deviceTriggers.stop()
+        consentCoordinator.close()
+        gateway.close()
         logs.setOnlineSink(null)
         webView.removeJavascriptInterface("OneDeskNative")
         webView.destroy()
@@ -138,7 +167,7 @@ class MainActivity : ComponentActivity() {
     private fun handleSchemeEvent(desktop: JSONObject, descriptor: JSONObject, eventId: String): Boolean {
         return try {
             val result = schemeCache.downloadAndCache(desktop, descriptor)
-            updateDesktopScheme(desktop.getString("desktopId"), result)
+            knownDesktops.updateScheme(desktop.getString("desktopId"), result)
             runOnUiThread {
                 webView.evaluateJavascript(
                     "window.__oneDeskHandleSchemeUpdated && window.__oneDeskHandleSchemeUpdated(${JSONObject.quote(desktop.getString("desktopId"))}, ${JSONObject.quote(result.version)}, ${JSONObject.quote(result.hash)});",
@@ -167,7 +196,7 @@ class MainActivity : ComponentActivity() {
         fun getDeviceId(): String = currentDeviceId()
 
         @JavascriptInterface
-        fun listKnownDesktops(): String = prefs.getString("knownDesktops", "[]") ?: "[]"
+        fun listKnownDesktops(): String = knownDesktops.listForFrontend()
 
         @JavascriptInterface
         fun startQrScan(): String {
@@ -200,7 +229,7 @@ class MainActivity : ComponentActivity() {
         fun connect(host: String, port: Int, code: String): String {
             val normalizedHost = host.trim()
             val normalizedPort = port.coerceIn(1, 65535)
-            val known = findDesktop(normalizedHost, normalizedPort)
+            val known = knownDesktops.find(normalizedHost, normalizedPort)
             val hasTrust = known?.optString("trustCredential").orEmpty().isNotBlank()
             if (!hasTrust && !Regex("^\\d{6}$").matches(code)) {
                 return response(false).put("errorCode", "InvalidVerificationCode").put("message", "验证码必须为 6 位数字").toString()
@@ -233,7 +262,7 @@ class MainActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun refreshScheme(desktopId: String): String {
-            val desktop = findDesktopById(desktopId)
+            val desktop = knownDesktops.findById(desktopId)
                 ?: return response(false).put("errorCode", "DesktopNotFound").put("message", "未找到该桌面端信任记录").toString()
             val trustCredential = desktop.optString("trustCredential")
             if (trustCredential.isBlank()) return response(false).put("errorCode", "TrustCredentialMissing").put("message", "该桌面端缺少信任凭据").toString()
@@ -242,11 +271,12 @@ class MainActivity : ComponentActivity() {
                     desktop.getString("host"),
                     desktop.optInt("port", 48320),
                     gateway.authorizedRequest("scheme", trustCredential),
+                    expectedFingerprint = desktop.optString("gatewayFingerprint"),
                 )
                 if (!gatewayResponse.optBoolean("ok")) return gatewayResponse.toString()
                 val descriptor = gatewayResponse.getJSONObject("payload").getJSONObject("scheme")
                 val result = schemeCache.downloadAndCache(desktop, descriptor)
-                updateDesktopScheme(desktopId, result)
+                knownDesktops.updateScheme(desktopId, result)
                 response(true).put("payload", JSONObject()
                     .put("cacheUpdated", result.updated)
                     .put("hasScheme", result.hasScheme)
@@ -269,11 +299,17 @@ class MainActivity : ComponentActivity() {
         ): String {
             val requestId = "req-${UUID.randomUUID()}"
             if (targetDeviceId == currentDeviceId()) {
-                return executeLocalCapability(capability, payloadJson, requestId).toString()
+                return executeLocalCapability(
+                    capability,
+                    payloadJson,
+                    requestId,
+                    "component:$componentId",
+                    enforcePermission = true,
+                ).toString()
             }
-            val desktopId = prefs.getString("activeDesktopId", null)
+            val desktopId = knownDesktops.activeDesktopId()
                 ?: return response(false).put("requestId", requestId).put("errorCode", "DesktopOffline").put("message", "当前未连接桌面端").toString()
-            val desktop = findDesktopById(desktopId)
+            val desktop = knownDesktops.findById(desktopId)
                 ?: return response(false).put("requestId", requestId).put("errorCode", "DesktopNotFound").put("message", "桌面端信任记录不存在").toString()
             return try {
                 val payload = runCatching { JSONObject(payloadJson) }.getOrElse { JSONObject() }
@@ -288,6 +324,7 @@ class MainActivity : ComponentActivity() {
                         .put("targetDeviceId", targetDeviceId)
                         .put("capability", capability)
                         .put("payload", payload),
+                    expectedFingerprint = desktop.optString("gatewayFingerprint"),
                 ).toString()
             } catch (error: Exception) {
                 logs.append("Error", "JsApi", error.message ?: "JSAPI 调用失败")
@@ -314,7 +351,12 @@ class MainActivity : ComponentActivity() {
                     .put("architecture", System.getProperty("os.arch") ?: "unknown")
                     .put("trustCredential", known?.optString("trustCredential") ?: JSONObject.NULL)
                     .put("logs", logs.snapshot())
-                val gatewayResponse = gateway.request(host, port, request)
+                val gatewayResponse = gateway.request(
+                    host,
+                    port,
+                    request,
+                    expectedFingerprint = known?.optString("gatewayFingerprint"),
+                )
                 if (!gatewayResponse.optBoolean("ok")) return gatewayResponse.toString()
                 val payload = gatewayResponse.getJSONObject("payload")
                 val desktopIdentity = payload.getJSONObject("desktop")
@@ -330,13 +372,14 @@ class MainActivity : ComponentActivity() {
                     .put("port", port)
                     .put("trusted", trustCredential.isNotBlank())
                     .put("trustCredential", trustCredential)
+                    .put("gatewayFingerprint", gateway.serverFingerprint())
                     .put("schemeVersion", descriptor.optString("version", "0"))
                     .put("schemeHash", descriptor.optString("hash", ""))
                     .put("lastConnectedAt", Instant.now().toString())
-                upsertDesktop(desktop)
+                knownDesktops.upsert(desktop)
                 val cacheResult = schemeCache.downloadAndCache(desktop, descriptor)
-                updateDesktopScheme(desktopId, cacheResult)
-                prefs.edit().putString("activeDesktopId", desktopId).apply()
+                knownDesktops.updateScheme(desktopId, cacheResult)
+                knownDesktops.setActiveDesktopId(desktopId)
                 logs.clear()
                 gateway.startSubscription(desktop)
                 logs.setOnlineSink { entry -> gateway.uploadLog(desktop, entry) }
@@ -354,143 +397,57 @@ class MainActivity : ComponentActivity() {
     }
 
     // 移动端本地能力只能由原生壳子执行；来自桌面网关和本机前端的调用统一经过此入口。
-    private fun executeLocalCapability(capability: String, payloadJson: String, requestId: String): JSONObject {
+    private fun executeLocalCapability(
+        capability: String,
+        payloadJson: String,
+        requestId: String,
+        sourceKey: String,
+        enforcePermission: Boolean,
+    ): JSONObject {
         val payload = runCatching { JSONObject(payloadJson) }.getOrElse { JSONObject() }
-        val base = response(false)
-            .put("requestId", requestId)
+        if (enforcePermission && !isCapabilityGranted(sourceKey, capability)) {
+            return response(false)
+                .put("requestId", requestId)
+                .put("targetDeviceId", currentDeviceId())
+                .put("capability", capability)
+                .put("errorCode", "PermissionDenied")
+                .put("message", "当前组件未获得该能力授权")
+                .put("module", "AndroidPermission")
+                .put("recoverable", true)
+        }
+        return capabilityExecutor.execute(AndroidCapabilityRequest(requestId, capability, payload, sourceKey))
             .put("targetDeviceId", currentDeviceId())
-            .put("capability", capability)
-        return try {
-            when (capability) {
-                "device.identity" -> base.put("ok", true).put(
-                    "payload",
-                    JSONObject()
-                        .put("deviceId", currentDeviceId())
-                        .put("displayName", Build.MODEL ?: "Android")
-                        .put("platform", "android")
-                        .put("architecture", System.getProperty("os.arch") ?: "unknown"),
-                )
-                "device.vibrate" -> {
-                    val duration = payload.optLong("durationMs", 80).coerceIn(10, 5_000)
-                    val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-                    } else {
-                        @Suppress("DEPRECATION")
-                        getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                    }
-                    vibrator.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE))
-                    base.put("ok", true).put("payload", JSONObject().put("durationMs", duration))
-                }
-                "clipboard.read" -> {
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
-                    base.put("ok", true).put("payload", JSONObject().put("text", text))
-                }
-                "clipboard.write" -> {
-                    val text = payload.optString("text")
-                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("OneDesk", text))
-                    base.put("ok", true)
-                }
-                "notification.native", "notification.inApp" -> {
-                    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    val notification = android.app.Notification.Builder(this, "onedesk-events")
-                        .setSmallIcon(android.R.drawable.ic_dialog_info)
-                        .setContentTitle(payload.optString("title", "OneDesk"))
-                        .setContentText(payload.optString("message", "OneDesk 动作已触发"))
-                        .setAutoCancel(true)
-                        .build()
-                    manager.notify(requestId.hashCode(), notification)
-                    base.put("ok", true)
-                }
-                "log.write" -> {
-                    logs.append(payload.optString("level", "Info"), payload.optString("category", "JsApi"), payload.optString("message", payloadJson))
-                    base.put("ok", true)
-                }
-                else -> base.put("errorCode", "CapabilityNotSupported").put("message", "Android 壳子不支持该能力")
+    }
+
+    private fun isCapabilityGranted(sourceKey: String, capability: String): Boolean {
+        val grants = mutableMapOf<String, Set<String>>()
+        val snapshot = activeSchemeSnapshot() ?: return false
+        val rows = snapshot.optJSONArray("permissionGrants") ?: JSONArray()
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            val capabilities = buildSet {
+                val values = row.optJSONArray("capabilities") ?: JSONArray()
+                for (valueIndex in 0 until values.length()) add(values.optString(valueIndex))
             }
-        } catch (error: Exception) {
-            logs.append("Error", "JsApiLocal", error.message ?: "移动端能力执行失败")
-            base.put("errorCode", "ExecutionFailed").put("message", error.message ?: "移动端能力执行失败")
+            grants[row.optString("sourceKey")] = capabilities
+        }
+        return SchemePermissionPolicy.isGranted(grants, sourceKey, capability)
+    }
+
+    private fun activeSchemeSnapshot(): JSONObject? {
+        val desktopId = knownDesktops.activeDesktopId() ?: return null
+        return schemeCache.get(desktopId)
+    }
+
+    private fun dispatchFrontendEvent(callbackName: String, payload: JSONObject) {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "window.$callbackName && window.$callbackName(${payload});",
+                null,
+            )
         }
     }
 
     private fun response(ok: Boolean): JSONObject = JSONObject().put("ok", ok)
 
-    private fun updateDesktopScheme(desktopId: String, result: SchemeCacheResult) {
-        val desktop = findDesktopById(desktopId) ?: return
-        desktop.put("schemeVersion", result.version).put("schemeHash", result.hash)
-        upsertDesktop(desktop)
-    }
-
-    private fun upsertDesktop(desktop: JSONObject) {
-        val current = knownDesktops()
-        val next = JSONArray()
-        for (index in 0 until current.length()) {
-            val item = current.optJSONObject(index) ?: continue
-            if (item.optString("desktopId") != desktop.optString("desktopId")) next.put(item)
-        }
-        next.put(desktop)
-        prefs.edit().putString("knownDesktops", next.toString()).commit()
-    }
-
-    private fun knownDesktops(): JSONArray {
-        return try { JSONArray(prefs.getString("knownDesktops", "[]") ?: "[]") } catch (_: Exception) { JSONArray() }
-    }
-
-    private fun findDesktop(host: String, port: Int): JSONObject? {
-        val list = knownDesktops()
-        for (index in 0 until list.length()) {
-            val item = list.optJSONObject(index) ?: continue
-            if (item.optString("host") == host && item.optInt("port") == port) return item
-        }
-        return null
-    }
-
-    private fun findDesktopById(desktopId: String): JSONObject? {
-        val list = knownDesktops()
-        for (index in 0 until list.length()) {
-            val item = list.optJSONObject(index) ?: continue
-            if (item.optString("desktopId") == desktopId) return item
-        }
-        return null
-    }
-}
-
-class BlockingWebViewClient(private val context: Context) : WebViewClient() {
-    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = shouldBlock(request.url)
-
-    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-        val localAsset = openAndroidAsset(request.url)
-        if (localAsset != null) return localAsset
-        return if (shouldBlock(request.url)) {
-            WebResourceResponse("text/plain", "utf-8", 403, "Blocked by OneDesk", mapOf("X-OneDesk-Policy" to "frontend-network-blocked"), ByteArrayInputStream(ByteArray(0)))
-        } else null
-    }
-
-    override fun onPageFinished(view: WebView, url: String) {
-        super.onPageFinished(view, url)
-        Log.d("OneDeskMobileWeb", "Frontend loaded: $url")
-    }
-
-    private fun openAndroidAsset(uri: Uri): WebResourceResponse? {
-        if (uri.scheme != "file") return null
-        val path = uri.path ?: return null
-        if (!path.startsWith("/android_asset/")) return null
-        val assetPath = path.removePrefix("/android_asset/")
-        val mimeType = when {
-            assetPath.endsWith(".html") -> "text/html"
-            assetPath.endsWith(".js") -> "application/javascript"
-            assetPath.endsWith(".css") -> "text/css"
-            assetPath.endsWith(".json") -> "application/json"
-            assetPath.endsWith(".svg") -> "image/svg+xml"
-            assetPath.endsWith(".png") -> "image/png"
-            assetPath.endsWith(".jpg") || assetPath.endsWith(".jpeg") -> "image/jpeg"
-            assetPath.endsWith(".webp") -> "image/webp"
-            else -> "application/octet-stream"
-        }
-        return try { WebResourceResponse(mimeType, "utf-8", context.assets.open(assetPath)) } catch (_: Exception) { null }
-    }
-
-    private fun shouldBlock(uri: Uri): Boolean = uri.scheme == "http" || uri.scheme == "https" || uri.scheme == "ws" || uri.scheme == "wss"
 }

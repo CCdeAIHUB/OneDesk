@@ -36,7 +36,7 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Component/page/scheme export currently writes packages to `%LOCALAPPDATA%\OneDesk\exports`; component export includes actions, page export includes referenced components/actions, and scheme export includes referenced pages/components/actions plus a plugin dependency report.
 - Permission grants are persisted in `%LOCALAPPDATA%\OneDesk\permission-grants.json`.
 - Structured desktop logs are stored as JSONL files under `%LOCALAPPDATA%\OneDesk\logs`.
-- Gateway service now starts a real chunked UDP JSON listener on port 48320 for desktop/mobile pairing, trusted reconnect, mobile log upload, scheme snapshot/resource retrieval, active scheme push/acknowledgement, and cross-device JSAPI request/response. This is a usable LAN transport prototype, but it is still not MsQuic and must not be treated as final QUIC compliance.
+- Gateway service starts a long-lived framed QUIC listener on port 48320 for desktop/mobile pairing, trusted reconnect, mobile log upload, scheme snapshot/resource retrieval, active scheme push/acknowledgement, heartbeat, and cross-device JSAPI request/response. Desktop uses `System.Net.Quic` with the MsQuic runtime; Android and iOS use pinned native MsQuic bindings. Raw UDP fallback is forbidden and protected by contract tests.
 - Gateway subscription heartbeats refresh peer liveness without repeatedly logging device registration; only pairing, trusted reconnect, and a new subscription establish/log a peer endpoint.
 - Desktop identity is persisted under `%LOCALAPPDATA%\OneDesk\desktop-identity.json`.
 - Trusted mobile pairing credentials are persisted under `%LOCALAPPDATA%\OneDesk\trusted-devices.json`, so a paired mobile can reconnect without a new six-digit code after desktop restart.
@@ -57,29 +57,29 @@ This file records confirmed project decisions and constraints. Keep it updated w
 - Creating a component, page, or scheme should enter the corresponding editor immediately, where the user can edit the name and save.
 - Component/page/scheme management pages require both import and create actions.
 - Scrollable areas and scrollbars must not trigger native window dragging.
-- Component import, page import, scheme import, and plugin import now use a two-step UI flow: inspect selected package manifest, show requested permissions and high-risk flags, allow the user to adjust grants, then confirm import. This is implemented for manifest-based grants, but dependency conflict resolution still needs a full user choice flow.
+- Component import, page import, scheme import, and plugin import use a two-step UI flow: inspect the manifest and dependency graph, show requested permissions and high-risk flags, collect plugin version-conflict choices, then perform an atomic install with rollback on failure.
 - Desktop component code editing now has a file-tree style UI with multiple draft files, and arbitrary edited file contents can be saved/read as real component project files under the component directory.
 - Page editing now supports selecting grid cells, setting span, binding components, and editing cell outline/radius in the UI.
 - Page editing includes a live preview switch. When enabled, cells with bound components should render the component's saved visual configuration instead of only showing the component name.
 - Desktop media resources are managed through a resource manager stored under the user data directory. Images/videos used by components or pages must first be added to the resource manager, then selecting a resource copies the file into the target component/page folder instead of sharing one mutable global file reference.
 - Page and component media background controls must use resource IDs/resource picker for image/video backgrounds, while solid and gradient backgrounds use color pickers.
 - Desktop visual-editor style generation, component preview style calculation, page background style, and 1:1 page-grid sizing are centralized in `frontends/desktop/src/editorVisualConfig.ts` to keep `App.vue` focused on view state and user flows.
-- Windows desktop media resource bridge handlers are split into `apps/desktop-windows/MainForm.Resources.cs`; `MainForm.cs` remains the shell coordinator and should avoid accumulating resource-manager details again.
+- Windows desktop delegates workspace, imports, resources, plugins, devices, permissions, and settings to the shared partial `DesktopBridgeDispatcher`. `MainForm.cs` is only the composition/lifecycle coordinator; Chromium, window, tray, and platform behavior are separated into dedicated partials/providers.
 - Scheme editing now supports adding/removing/reordering pages, editing global animation values, and editing page-specific switching edges in the UI.
 - Plugin import uses safe zip extraction limits for the new confirmed import path and the legacy bridge path. Plugin settings schema can be rendered as a basic JSON Schema form for string, number, integer, and boolean fields; settings are persisted to the plugin package and submitted to backend plugins through `onedesk.configure` when a backend process exists.
-- Android frontend no longer simulates a successful connection when the native shell bridge is absent. Android native shell performs UDP JSON pairing/trusted reconnect against the desktop gateway, uploads disconnected logs, forwards online logs immediately, stores assigned mobile ID/trust credential, and atomically caches integrity-checked scheme snapshots and media assets. This is not yet MsQuic.
+- Android frontend never simulates a successful connection when the native shell bridge is absent. Android uses native MsQuic for pairing/trusted reconnect, uploads disconnected logs, forwards online logs immediately, stores encrypted identity/trust credentials, and atomically caches integrity-checked scheme snapshots, code artifacts, and media assets.
 - Android connection screen may use its own connection-card background, but after connection the mobile control surface must render against the full device screen instead of a centered phone-like container. The connected control surface must not show extra app chrome such as "connected to", page title text, theme switching, bottom page indicators, cache-updated text, or next-page buttons unless those are part of the desktop-designed page itself.
 - Android cache schema version `4` clears obsolete `scheme:*` snapshots and scheme assets. Demo workspace/scheme bootstrap data is forbidden.
 - Android pairing QR behavior is camera scanning through the native CameraX shell. The mobile app must not generate the desktop pairing QR.
 - After Android connects, it maintains a native subscription. Desktop scheme application pushes a descriptor to the exact device; Android downloads the snapshot/assets, replaces the cache atomically, updates the visible page, and returns an acknowledgement. A 10-second pull refresh remains only as recovery fallback.
-- Android renders saved pages full-screen, including page backgrounds, square grid layout, spans, visual components, image/video media, text, actions, page transitions, and touch gestures. Code-mode components still require a compiled mobile runtime artifact; raw Vue project files are not yet executable on mobile and must not be represented as successfully rendered.
+- Android renders saved pages full-screen, including page backgrounds, square grid layout, spans, visual and compiled code components, image/video media, text, actions, page transitions, touch gestures, and native sensor triggers. Raw Vue source projects are never treated as mobile artifacts; desktop-generated hash-validated artifacts are required.
 - Page preview width/height ratio is persisted in the page model. Android uses it to request sensor portrait or landscape orientation without recreating the Activity or losing the active Vue connection state.
 - Android Gradle wrapper is included, and local validation has produced a debug APK with the temporary JDK/Android SDK toolchain installed under `%LOCALAPPDATA%\OneDeskBuildTools`.
 - On 2026-07-17, Android device `22041211AC` was used to verify the native QR scanner, first-device empty-scheme screen, full-screen landscape rendering, desktop-initiated scheme push, cache acknowledgement, and immediate visible refresh.
-- Desktop JSAPI rejects calls whose source identity is freely declared as `frontend`; component/plugin source wrappers exist and are validated against known component/plugin IDs. Full trusted runtime injection inside isolated component/plugin execution containers remains incomplete.
-- Cross-device JSAPI forwarding validates trusted source/target state, delivers requests to a live subscribed Android runtime, executes supported native handlers, and returns the real response through the desktop gateway. The full platform capability handler set remains incomplete and unsupported calls return `CapabilityNotSupported`.
-- The functional desktop client is currently Windows-only WinForms/WebView2. `apps/desktop` Avalonia UI remains a placeholder and macOS/Linux desktop deliverables are not complete.
-- The iOS Swift/WKWebView directory remains a shell skeleton without pairing, scheme cache/rendering, JSAPI routing, or QR scanning.
+- Desktop JSAPI rejects freely declared frontend identities. Component and plugin execution sessions receive shell-owned source tokens, and the router validates source type, source ID, token, permission grant, target trust, and platform support before execution or forwarding.
+- Cross-device JSAPI forwarding validates trusted source/target state, delivers requests through the desktop gateway, and returns the real native result. The generated canonical capability directory is complete; platform-prohibited operations return structured `CapabilityNotSupported` errors.
+- Windows uses the WinForms/WebView2 shell. macOS and Linux use the functional Avalonia/CefGlue shell with the same Vue frontend, bridge dispatcher, gateway, tray lifecycle, settings, plugins, logs, and workspace services. Release automation covers all six desktop runtime identifiers.
+- The iOS Swift/WKWebView shell includes native MsQuic, manual and QR pairing, Keychain trust, atomic scheme/assets cache, disconnected logs, fullscreen renderer bridge, JSAPI routing, permission-aware unsupported errors, and motion/orientation triggers. Xcode compilation is CI-only from the current Windows host.
 - The authoritative implementation gap audit is `docs/implementation-gap-audit.md`; update it whenever a listed gap is closed or a new incomplete path is found.
 
 ## Product Summary
@@ -405,9 +405,9 @@ This file records confirmed project decisions and constraints. Keep it updated w
 
 - None yet.
 
-## Open Questions
+## Resolved Architecture Decisions
 
-- Confirm desktop Chromium integration package after prototype validation.
-- Confirm exact protocol schema technology.
-- Confirm CI matrix and release artifact strategy.
-- User will describe desktop action capability boundaries later.
+- Cross-platform Chromium shell: Avalonia plus CefGlue; Windows may use the native WinForms/WebView2 shell while sharing all business services and bridge contracts.
+- Protocol source: `packages/protocol/schema/onedesk.protocol.json` plus canonical `capabilities.json`, generated into TypeScript, C#, Kotlin, and Swift.
+- Release matrix: Windows/macOS/Linux x64 and arm64, Android arm64-v8a and x86_64, and iOS Simulator in GitHub Actions. Store signing remains an owner-credential step, not a deferred product feature.
+- Action capability boundaries follow the generated JSAPI directory, permission catalog, touch trigger catalog, and native device-trigger normalization.

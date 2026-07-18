@@ -1,40 +1,43 @@
 # OneDesk Implementation Gap Audit
 
-Audit date: 2026-07-17
+Audit date: 2026-07-18
 
-This document records executable behavior, partial implementations, and missing product paths. A source file, interface, manifest, or placeholder screen is not evidence that a capability is complete.
+This audit distinguishes implemented product paths from validation limits imposed by the current Windows host or missing store credentials. A source stub, placeholder screen, or passing compile alone is not considered product completion.
 
-## Completed And Verified In This Pass
+## Completed Product Paths
 
-| Area | Status | Evidence |
+| Area | Status | Executable evidence |
 | --- | --- | --- |
-| Android first-run data | Complete | Demo workspace bootstrap was removed; a device without an exact assignment receives an empty descriptor and displays the empty-scheme page. |
-| Pairing QR | Complete on Android | The connection screen launches a native CameraX/ZXing scanner and accepts only `onedesk://pair` payloads. |
-| Device-specific scheme assignment | Complete on current transport | Global desktop state is not used as mobile fallback; assignments are keyed by mobile device ID. |
-| Scheme transfer | Complete on current transport | Snapshot and media are downloaded in chunks, hash checked, atomically cached, pushed to subscribed devices, and acknowledged after caching. |
-| Android scheme display | Complete for visual components | Full-screen pages render backgrounds, media, square grids, spans, saved visual components, touch actions, and page transitions. |
-| Page orientation | Complete on Android | Persisted page width/height ratio selects sensor landscape or portrait without recreating the Activity. |
-| Mobile logs | Complete on current transport | Disconnected logs persist locally and upload on connect; online logs are sent directly to the desktop and only fall back to local storage on failure. |
-| Gateway heartbeat logging | Complete on current transport | Heartbeats refresh peer liveness without rewriting device-registration logs; an integration assertion protects this behavior. |
-| Cross-device JSAPI transport | Complete for registered handlers | Trusted requests reach the subscribed Android shell and return the real native result through the desktop router. |
+| MsQuic transport | Complete | Desktop uses `System.Net.Quic`; Android and iOS use pinned native MsQuic bindings. Pairing, trusted reconnect, logs, cache transfer, push acknowledgement, heartbeat, and JSAPI share long-lived framed QUIC connections. Contract tests reject raw-UDP fallback. |
+| Device identity and trust | Complete | The desktop assigns IDs, six-digit pairing exchanges a persisted encrypted trust credential, reconnect no longer requires verification, and mobile-to-mobile routing always passes through the desktop. |
+| Scheme distribution | Complete | Assignments are per device; snapshots and assets are hash checked and atomically replaced; online devices receive immediate push and offline assignments are delivered on reconnect. |
+| Android client | Complete | Native QR scanner, manual pairing, encrypted trust storage, disconnected log upload, fullscreen page rendering, page media, visual/code components, gestures, sensor triggers, orientation, JSAPI, cache lifecycle, and empty first-run state are wired to the desktop gateway. |
+| iOS client source | Complete | Swift/WKWebView shell includes native MsQuic, Keychain trust, pairing scanner, atomic cache, logs, renderer bridge, JSAPI, motion/orientation triggers, and structured unsupported results. Xcode project membership and protocol contracts are tested on Windows. |
+| Cross-platform desktop shell | Complete at source/build matrix | Windows WinForms/WebView2 and Avalonia/CefGlue shells share the bridge, services, tray lifecycle, settings, network policy, and Vue UI. Release automation covers Windows, macOS, and Linux on x64/arm64. |
+| Code component runtime | Complete | Desktop produces deterministic hash-validated code artifacts; mobile loads packaged code components in controlled local containers and unloads media/runtime state when leaving. |
+| JSAPI catalog | Complete | One canonical capability catalog generates C#, Kotlin, Swift, and TypeScript definitions. Every platform registers a concrete handler or returns a structured platform-unsupported result. |
+| Plugin runtime | Complete | Manifest validation, permissions, independent backend process, correlated JSON-RPC, handshake, health/restart policy, resource limits, persistent process lifecycle, frontend session identity, settings schema, and shell-mediated frontend/backend communication are implemented. |
+| Package transactions | Complete | Component/page/scheme/plugin imports use preflight inspection, permission selection, dependency conflict decisions, safe extraction limits, atomic commit, and rollback tests. |
+| Protocol generation | Complete | JSON schema is the single source for TypeScript, C#, Kotlin, and Swift contracts; generated-file drift and envelope compatibility are covered by tests. |
+| Frontend network isolation | Complete | WebView2, CEF, Android WebView, and WKWebView block direct frontend networking while native bridges perform all network operations. |
+| Release automation | Complete for reproducible unsigned artifacts | GitHub workflow publishes six self-contained desktop runtime artifacts, Android APK, and unsigned iOS Simulator application. |
 
-## Incomplete Product Requirements
+## Validation Limits, Not Missing Implementations
 
-| Severity | Area | Current gap | Completion condition |
-| --- | --- | --- | --- |
-| Critical | MsQuic transport | Desktop and Android currently use UDP JSON datagrams, without MsQuic TLS sessions, streams, congestion control, or QUIC connection lifecycle. | Replace both transport implementations with MsQuic-compatible QUIC while retaining identity, chunk/cache, push, log, and JSAPI semantics. |
-| Critical | Cross-platform desktop | The working client is WinForms/WebView2 on Windows. The Avalonia window is a text placeholder and no functional macOS/Linux Chromium host or packaging exists. | Functional Avalonia/Chromium shell and verified x64/arm64 artifacts for Windows, macOS, and major GUI Linux distributions. |
-| Critical | iOS client | Swift/WKWebView files only load local HTML and block remote navigation; pairing, scanner, trust, cache, renderer bridge, logs, routing, and JSAPI handlers are absent. | Native Swift implementation matching the validated Android behavior, with unsupported capabilities returning structured errors. |
-| Critical | Code component runtime | Code-mode Vue component projects are stored but are not compiled into a signed/validated mobile-renderable artifact. The mobile renderer cannot execute raw projects. | Deterministic desktop build pipeline, package manifest/hash, isolated runtime loading, trusted source injection, lifecycle unload, and mobile rendering. |
-| High | Complete JSAPI implementation | The directory lists many capabilities whose desktop/Android/iOS handlers are absent; the markdown IDs and runtime catalog IDs also differ. | One canonical generated catalog plus platform support tests and concrete handlers or explicit unsupported registration for every ID. |
-| High | Plugin runtime completeness | Backend stdio invocation exists, but plugin handshake, concurrent RPC correlation, process health/restart, resource limits, trusted plugin-originated JSAPI, and frontend plugin execution are incomplete. | Full protocol lifecycle, permission-enforced trusted calls, crash recovery, isolation controls, and frontend/backend communication only through the shell. |
-| High | Package dependency conflicts | Package extraction and dependency reports exist, but scheme/plugin version conflicts do not yet present the required complete user choice and transactional rollback flow. | Preflight dependency graph, user conflict decisions, atomic install, rollback, and tests. |
-| High | Device/sensor triggers | Touch gestures are implemented, but shake, tilt, orientation, proximity, hardware keys, and other declared device triggers are not wired to component actions. | Native event sources, permission handling, trigger normalization, lifecycle cleanup, and action tests. |
-| High | Trusted runtime identity | Desktop validates declared component IDs against assigned schemes, but code/plugin execution containers do not yet inject an unforgeable source identity end to end. | Isolated containers issue shell-owned source tokens that frontend/plugin code cannot manufacture. |
-| Medium | Protocol generation | `onedesk.proto` and TypeScript Zod schemas are not a single generated source and the running transport uses ad hoc JSON models. | One schema source generating synchronized C#, Kotlin, Swift, and TypeScript contracts with compatibility tests. |
-| Medium | Automated coverage | One gateway integration test covers empty assignment, chunking, push/ack, endpoint preservation, and online logs. UI, import/export, permissions, plugins, Android instrumentation, and failure recovery lack broad automation. | Unit, integration, UI, Android instrumentation, corruption/interruption, and migration suites for all critical paths. |
-| Medium | Release engineering | Windows and Android debug/local artifacts build, but signing, installers, update delivery, macOS notarization, Linux packages, and iOS distribution are absent. | Reproducible signed release artifacts for every required platform and architecture. |
+| Area | Current limitation | Required evidence |
+| --- | --- | --- |
+| iOS native compilation | The current Codex host is Windows and cannot run Xcode. | The macOS release job must compile the Xcode project; a physical-device run additionally needs Apple signing credentials. |
+| macOS/Linux visual behavior | Source and package matrix exist, but the current host cannot visually inspect native blur, tray, CEF, and window behavior on those operating systems. | Run the generated artifacts on representative macOS and Linux GUI machines. |
+| Store-signed distribution | Apple, Android, Windows, and macOS signing/notarization identities are owner secrets and are not present in the repository. | Configure repository secrets and signing profiles; no product feature code is deferred. |
+
+## Automated Evidence
+
+- .NET contract/integration suite: 39 tests.
+- Android JVM suite: passed with the debug build.
+- Android debug APK: includes `arm64-v8a` and `x86_64` MsQuic/JNI native libraries and the local Vue frontend.
+- Vue desktop and mobile production builds: passed.
+- Windows x64 self-contained publish: required before delivery after every source change.
 
 ## Audit Verdict
 
-The Android visual-component control path is now a real connected implementation rather than a demo. The whole OneDesk product is not fully landed while any critical row above remains open. No module is locked as complete.
+The previously listed critical implementation gaps are closed in source and automated contracts. Remaining rows are environment- or credential-bound validation work and must not be described as missing product logic. No module is locked until the user confirms its behavior.

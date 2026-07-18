@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
-    "build": "vue-tsc -b && vite build",
+    "generate:icons": "node ../../scripts/generate-icon-subset.mjs src src/generatedIconCollections.ts solar fluent",
+    "build": "pnpm generate:icons && vue-tsc -b && vite build",
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
@@ -20,10 +21,13 @@
     "@codemirror/view": "^6.43.4",
     "@iconify-json/fluent": "^1.2.51",
     "@iconify-json/solar": "^1.2.5",
+    "@iconify/types": "latest",
     "@iconify/vue": "latest",
     "@onedesk/protocol": "workspace:*",
     "@tailwindcss/vite": "latest",
+    "@vue/compiler-sfc": "3.5.40",
     "codemirror": "^6.0.2",
+    "esbuild-wasm": "0.28.1",
     "qrcode": "^1.5.4",
     "tailwindcss": "latest",
     "vue": "latest"
@@ -31,7 +35,7 @@
   "devDependencies": {
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "latest",
-    "typescript": "latest",
+    "typescript": "5.9.3",
     "vite": "latest",
     "vue-tsc": "latest"
   }

@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "generate": "node scripts/generate-protocol.mjs",
+    "check:generated": "node scripts/generate-protocol.mjs --check",
+    "build": "pnpm check:generated && tsc -p tsconfig.json",
+    "typecheck": "pnpm check:generated && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "zod": "latest"

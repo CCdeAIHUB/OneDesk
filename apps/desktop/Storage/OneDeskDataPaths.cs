@@ -19,6 +19,7 @@ public sealed class OneDeskDataPaths
         Exports = Path.Combine(Root, "exports");
         Cache = Path.Combine(Root, "cache");
         Temp = Path.Combine(Root, "temp");
+        TransportIdentity = Path.Combine(Root, "transport-identity");
     }
 
     public string Root { get; }
@@ -32,6 +33,7 @@ public sealed class OneDeskDataPaths
     public string Exports { get; }
     public string Cache { get; }
     public string Temp { get; }
+    public string TransportIdentity { get; }
 
     public void EnsureCreated()
     {
@@ -46,5 +48,6 @@ public sealed class OneDeskDataPaths
         Directory.CreateDirectory(Exports);
         Directory.CreateDirectory(Cache);
         Directory.CreateDirectory(Temp);
+        Directory.CreateDirectory(TransportIdentity);
     }
 }

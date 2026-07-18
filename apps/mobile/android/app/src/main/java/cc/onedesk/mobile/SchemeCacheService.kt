@@ -40,7 +40,14 @@ class SchemeCacheService(
             .put("pages", JSONArray())
             .put("components", JSONArray())
             .put("actions", JSONArray())
-        materializeAssets(desktop, hash, payload)
+            .put("permissionGrants", JSONArray())
+        val assetRoot = schemeAssetRoot(desktopId, hash)
+        try {
+            materializeAssets(desktop, assetRoot, payload)
+        } catch (error: Exception) {
+            assetRoot.deleteRecursively()
+            throw error
+        }
         val cache = JSONObject()
             .put("desktopId", desktopId)
             .put("version", version)
@@ -51,8 +58,11 @@ class SchemeCacheService(
             .put("pages", payload.optJSONArray("pages") ?: JSONArray())
             .put("components", payload.optJSONArray("components") ?: JSONArray())
             .put("actions", payload.optJSONArray("actions") ?: JSONArray())
-        prefs.edit().putString("scheme:$desktopId", cache.toString()).commit()
-        removeOldAssetDirectories(hash)
+            .put("permissionGrants", payload.optJSONArray("permissionGrants") ?: JSONArray())
+        check(prefs.edit().putString("scheme:$desktopId", cache.toString()).commit()) {
+            "无法提交方案缓存索引"
+        }
+        removeOldAssetDirectories(desktopId, hash)
         return SchemeCacheResult(true, hasScheme, version, hash)
     }
 
@@ -72,6 +82,7 @@ class SchemeCacheService(
                     .put("hash", expectedHash)
                     .put("offset", offset)
                     .put("length", 24 * 1024),
+                expectedFingerprint = desktop.optString("gatewayFingerprint"),
             )
             if (!response.optBoolean("ok")) throw IllegalStateException(response.optString("message", "方案分块下载失败"))
             val chunk = response.getJSONObject("payload")
@@ -87,11 +98,12 @@ class SchemeCacheService(
         return JSONObject(String(content, Charsets.UTF_8))
     }
 
-    private fun materializeAssets(desktop: JSONObject, schemeHash: String, payload: JSONObject) {
+    private fun materializeAssets(desktop: JSONObject, assetRoot: File, payload: JSONObject) {
+        assetRoot.mkdirs()
         val pages = payload.optJSONArray("pages") ?: JSONArray()
         for (index in 0 until pages.length()) {
             val page = pages.optJSONObject(index) ?: continue
-            replaceMediaSource(desktop, schemeHash, "page", page.optString("id"), page, "backgroundMediaSource")
+            replaceMediaSource(desktop, assetRoot, "page", page.optString("id"), page, "backgroundMediaSource")
         }
         val components = payload.optJSONArray("components") ?: JSONArray()
         for (index in 0 until components.length()) {
@@ -99,15 +111,15 @@ class SchemeCacheService(
             val definition = bundle.optJSONObject("definition") ?: continue
             val config = bundle.optJSONObject("visualConfig") ?: continue
             val background = config.optJSONObject("background")
-            if (background != null) replaceMediaSource(desktop, schemeHash, "component", definition.optString("id"), background, "mediaSource")
+            if (background != null) replaceMediaSource(desktop, assetRoot, "component", definition.optString("id"), background, "mediaSource")
             val image = config.optJSONObject("image")
-            if (image != null) replaceMediaSource(desktop, schemeHash, "component", definition.optString("id"), image, "source")
+            if (image != null) replaceMediaSource(desktop, assetRoot, "component", definition.optString("id"), image, "source")
         }
     }
 
     private fun replaceMediaSource(
         desktop: JSONObject,
-        schemeHash: String,
+        assetRoot: File,
         ownerKind: String,
         ownerId: String,
         target: JSONObject,
@@ -119,17 +131,15 @@ class SchemeCacheService(
         val fileName = try { Uri.parse(source).lastPathSegment.orEmpty() } catch (_: Exception) { File(source).name }
         if (fileName.isBlank()) return
         try {
-            val file = downloadAsset(desktop, schemeHash, ownerKind, ownerId, fileName)
+            val file = downloadAsset(desktop, assetRoot, ownerKind, ownerId, fileName)
             target.put(key, Uri.fromFile(file).toString())
         } catch (error: Exception) {
-            target.put(key, "")
             logs.append("Error", "SchemeAsset", "$ownerKind/$ownerId/$fileName：${error.message ?: "资源下载失败"}")
+            throw error
         }
     }
 
-    private fun downloadAsset(desktop: JSONObject, schemeHash: String, ownerKind: String, ownerId: String, fileName: String): File {
-        val root = File(context.filesDir, "scheme-assets/$schemeHash")
-        root.mkdirs()
+    private fun downloadAsset(desktop: JSONObject, root: File, ownerKind: String, ownerId: String, fileName: String): File {
         val safeName = "${ownerKind}-${ownerId}-${File(fileName).name}".replace(Regex("[^A-Za-z0-9._-]"), "_")
         val destination = File(root, safeName)
         if (destination.exists() && destination.length() > 0) return destination
@@ -148,6 +158,7 @@ class SchemeCacheService(
                         .put("offset", offset)
                         .put("length", 24 * 1024),
                     timeoutMs = 12_000,
+                    expectedFingerprint = desktop.optString("gatewayFingerprint"),
                 )
                 if (!response.optBoolean("ok")) throw IllegalStateException(response.optString("message", "资源下载失败"))
                 val chunk = response.getJSONObject("payload")
@@ -159,14 +170,29 @@ class SchemeCacheService(
                 if (chunk.optBoolean("complete")) break
             }
         }
-        if (destination.exists()) destination.delete()
+        if (destination.exists() && !destination.delete()) throw IllegalStateException("无法替换旧资源缓存")
         if (!temporary.renameTo(destination)) throw IllegalStateException("无法提交资源缓存")
         return destination
     }
 
-    private fun removeOldAssetDirectories(currentHash: String) {
-        val root = File(context.filesDir, "scheme-assets")
-        root.listFiles()?.filter { it.isDirectory && it.name != currentHash }?.forEach { it.deleteRecursively() }
+    private fun schemeAssetRoot(desktopId: String, schemeHash: String): File {
+        val safeDesktopId = desktopId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val safeHash = schemeHash.ifBlank { "empty" }.replace(Regex("[^A-Fa-f0-9._-]"), "_")
+        return File(context.filesDir, "scheme-assets/$safeDesktopId/$safeHash")
+    }
+
+    private fun removeOldAssetDirectories(desktopId: String, currentHash: String) {
+        val safeDesktopId = desktopId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val safeHash = currentHash.ifBlank { "empty" }.replace(Regex("[^A-Fa-f0-9._-]"), "_")
+        val desktopRoot = File(context.filesDir, "scheme-assets/$safeDesktopId")
+        val directories = desktopRoot.listFiles()
+            ?.filter(File::isDirectory)
+            ?.map { SchemeAssetDirectory(desktopId, it.name) }
+            .orEmpty()
+        val stale = SchemeAssetRetentionPolicy.staleDirectories(desktopId, safeHash, directories)
+            .map(SchemeAssetDirectory::schemeHash)
+            .toSet()
+        desktopRoot.listFiles()?.filter { it.isDirectory && it.name in stale }?.forEach { it.deleteRecursively() }
     }
 
     private fun sha256(bytes: ByteArray): String {

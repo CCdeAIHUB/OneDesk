@@ -7,200 +7,343 @@ namespace OneDesk.Desktop.Services;
 
 public sealed class PluginHostService : IDisposable
 {
+    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan InvocationTimeout = TimeSpan.FromSeconds(30);
     private readonly StructuredLogStore _logs;
-    private readonly ConcurrentDictionary<string, PluginRegistration> _plugins = new();
-    private readonly List<Process> _processes = [];
-    private int _rpcSequence;
+    private readonly ConcurrentDictionary<string, PluginRegistration> _plugins = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _registrationGate = new(1, 1);
+    private Func<string, string, JsonElement, CancellationToken, Task<object?>>? _originatedRequestHandler;
+    private int _disposed;
 
     public PluginHostService(StructuredLogStore logs)
     {
         _logs = logs;
     }
 
-    public IReadOnlyList<Process> Processes => _processes;
+    public IReadOnlyList<Process> Processes => _plugins.Values
+        .Select(registration => registration.Session?.Process)
+        .Where(process => process is not null)
+        .Cast<Process>()
+        .ToArray();
 
-    public IReadOnlyList<PluginManifest> InstalledPlugins => _plugins.Values.Select(registration => registration.Manifest).ToArray();
+    public IReadOnlyList<PluginManifest> InstalledPlugins => _plugins.Values
+        .Select(registration => registration.Manifest)
+        .OrderBy(manifest => manifest.Name, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
-    public Task<bool> RemoveAsync(string pluginId, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// 插件主动调用系统能力时，插件身份由宿主注册记录注入，插件 JSON 不能自行声明来源身份。
+    /// </summary>
+    public void ConfigureOriginatedRequestHandler(
+        Func<string, string, JsonElement, CancellationToken, Task<object?>> handler) =>
+        _originatedRequestHandler = handler;
+
+    public async Task<bool> RemoveAsync(string pluginId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (!_plugins.TryRemove(pluginId, out var registration))
+        PluginRegistration? registration;
+        await _registrationGate.WaitAsync(cancellationToken);
+        try
         {
-            return Task.FromResult(false);
+            if (!_plugins.TryRemove(pluginId, out registration)) return false;
+            registration.Removed = true;
+        }
+        finally
+        {
+            _registrationGate.Release();
         }
 
-        if (registration.Process is { HasExited: false } process)
-        {
-            process.Kill(entireProcessTree: true);
-            process.Dispose();
-        }
+        await StopSessionAsync(registration);
 
         if (!string.IsNullOrWhiteSpace(registration.PackageDirectory) && Directory.Exists(registration.PackageDirectory))
         {
             Directory.Delete(registration.PackageDirectory, recursive: true);
         }
 
-        _logs.Append("desktop", "Info", "Plugin", "Removed plugin", new Dictionary<string, object?>
-        {
-            ["pluginId"] = pluginId
-        });
-        return Task.FromResult(true);
+        _logs.Append("desktop", "Info", "Plugin", "已移除插件", new Dictionary<string, object?> { ["pluginId"] = pluginId });
+        return true;
     }
 
     public async Task RegisterManifestAsync(PluginManifest manifest, string packageDirectory = "", CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var registration = new PluginRegistration(manifest, packageDirectory);
-        _plugins[manifest.Id] = registration;
-        _logs.Append("desktop", "Info", "Plugin", "Registered plugin manifest", new Dictionary<string, object?>
-        {
-            ["pluginId"] = manifest.Id,
-            ["persistent"] = manifest.Backend?.Persistent ?? manifest.Persistent,
-            ["hasFrontend"] = manifest.Frontend is not null,
-            ["hasBackend"] = manifest.Backend is not null
-        });
+        await using var prepared = await PrepareManifestAsync(manifest, packageDirectory, cancellationToken);
+        await prepared.CommitAsync(cancellationToken);
+    }
 
-        if (manifest.Backend?.Persistent == true)
+    /// <summary>
+    /// 先验证清单并启动常驻后端，但不替换当前注册；包安装可在所有插件均准备成功后统一提交。
+    /// </summary>
+    public async Task<PreparedPluginRegistration> PrepareManifestAsync(
+        PluginManifest manifest,
+        string packageDirectory = "",
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ValidateManifest(manifest, packageDirectory);
+        var candidate = new PluginRegistration(manifest, packageDirectory);
+        try
         {
-            await EnsureProcessAsync(registration, cancellationToken);
+            // 常驻插件先完成启动和握手，不能为了尝试新版本而提前停止仍可用的旧版本。
+            if (manifest.Backend?.Persistent == true)
+            {
+                await EnsureSessionAsync(candidate, cancellationToken);
+            }
+            return new PreparedPluginRegistration(this, candidate);
         }
+        catch
+        {
+            candidate.Removed = true;
+            await StopSessionAsync(candidate);
+            throw;
+        }
+    }
+
+    private async Task CommitPreparedAsync(PluginRegistration candidate, CancellationToken cancellationToken)
+    {
+        PluginRegistration? previous;
+        await _registrationGate.WaitAsync(cancellationToken);
+        try
+        {
+            _plugins.TryGetValue(candidate.Manifest.Id, out previous);
+            _plugins[candidate.Manifest.Id] = candidate;
+            candidate.Committed = true;
+            if (previous is not null) previous.Removed = true;
+        }
+        finally
+        {
+            _registrationGate.Release();
+        }
+
+        if (candidate.Session is { } session && candidate.Manifest.Backend?.Persistent == true)
+        {
+            _ = MonitorPersistentSessionAsync(candidate, session);
+        }
+
+        if (previous is not null)
+        {
+            try
+            {
+                await StopSessionAsync(previous);
+            }
+            catch (Exception error)
+            {
+                // 新注册已原子切换，旧进程清理失败只能记录，不能反向破坏已通过握手的新版本。
+                _logs.Append("desktop", "Error", "Plugin", "旧插件进程清理失败", new Dictionary<string, object?>
+                {
+                    ["pluginId"] = candidate.Manifest.Id,
+                    ["error"] = error.Message,
+                });
+            }
+        }
+
+        _logs.Append("desktop", "Info", "Plugin", "已注册插件清单", new Dictionary<string, object?>
+        {
+            ["pluginId"] = candidate.Manifest.Id,
+            ["persistent"] = candidate.Manifest.Backend?.Persistent ?? candidate.Manifest.Persistent,
+            ["hasFrontend"] = candidate.Manifest.Frontend is not null,
+            ["hasBackend"] = candidate.Manifest.Backend is not null,
+        });
+    }
+
+    private static async ValueTask DiscardPreparedAsync(PluginRegistration candidate)
+    {
+        candidate.Removed = true;
+        await StopSessionAsync(candidate);
     }
 
     public async Task<object?> InvokeAsync(string pluginId, string method, object? parameters, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!_plugins.TryGetValue(pluginId, out var registration))
+        if (!_plugins.TryGetValue(pluginId, out var registration)) return Error("PluginNotInstalled", "插件未安装");
+        if (registration.Manifest.Backend is null) return Error("PluginBackendMissing", "插件没有后端能力");
+
+        try
         {
-            _logs.Append("desktop", "Warning", "Plugin", "Plugin invocation failed because plugin is not installed", new Dictionary<string, object?>
+            var session = await EnsureSessionAsync(registration, cancellationToken);
+            var response = await session.InvokeAsync(
+                "onedesk.invoke",
+                new { method, @params = parameters, source = new { kind = "system" } },
+                InvocationTimeout,
+                cancellationToken);
+            _logs.Append("desktop", "Info", "Plugin", "已调用插件方法", new Dictionary<string, object?>
             {
                 ["pluginId"] = pluginId,
-                ["method"] = method
+                ["method"] = method,
             });
-            return new { ok = false, errorCode = "PluginNotInstalled", message = "插件未安装" };
+            return response;
         }
-
-        if (registration.Manifest.Backend is null)
+        catch (TimeoutException error)
         {
-            return new { ok = false, errorCode = "PluginBackendMissing", message = "插件没有后端能力" };
+            return Error("PluginTimeout", error.Message);
         }
-
-        var process = await EnsureProcessAsync(registration, cancellationToken);
-        var payload = new
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            jsonrpc = "2.0",
-            id = Interlocked.Increment(ref _rpcSequence),
-            method = "onedesk.invoke",
-            @params = new
+            _logs.Append("desktop", "Error", "Plugin", "插件调用失败", new Dictionary<string, object?>
             {
-                method,
-                @params = parameters,
-                source = new { kind = "system" }
-            }
-        };
-
-        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
-        await process.StandardInput.FlushAsync();
-        var line = await process.StandardOutput.ReadLineAsync(cancellationToken);
-        _logs.Append("desktop", "Info", "Plugin", "Invoked plugin method", new Dictionary<string, object?>
+                ["pluginId"] = pluginId,
+                ["method"] = method,
+                ["error"] = error.Message,
+            });
+            return Error("PluginExecutionFailed", error.Message);
+        }
+        finally
         {
-            ["pluginId"] = pluginId,
-            ["method"] = method
-        });
-
-        return string.IsNullOrWhiteSpace(line)
-            ? new { ok = false, errorCode = "PluginNoResponse", message = "插件进程没有返回响应" }
-            : JsonSerializer.Deserialize<JsonElement>(line);
+            if (registration.Manifest.Backend?.Persistent != true) await StopSessionAsync(registration);
+        }
     }
 
     public async Task<object?> SubmitSettingsAsync(string pluginId, object? settings, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!_plugins.TryGetValue(pluginId, out var registration))
-        {
-            return new { ok = false, errorCode = "PluginNotInstalled", message = "插件未安装" };
-        }
-
+        if (!_plugins.TryGetValue(pluginId, out var registration)) return Error("PluginNotInstalled", "插件未安装");
         if (!string.IsNullOrWhiteSpace(registration.PackageDirectory))
         {
             Directory.CreateDirectory(registration.PackageDirectory);
-            var settingsPath = Path.Combine(registration.PackageDirectory, "onedesk.settings.json");
-            await File.WriteAllTextAsync(settingsPath, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+            var path = Path.Combine(registration.PackageDirectory, "onedesk.settings.json");
+            var temporary = $"{path}.tmp-{Guid.NewGuid():N}";
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+            File.Move(temporary, path, overwrite: true);
         }
+        if (registration.Manifest.Backend is null) return new { ok = true, persisted = true, delivered = false };
 
-        if (registration.Manifest.Backend is null)
+        try
         {
-            _logs.Append("desktop", "Info", "Plugin", "Saved frontend-only plugin settings", new Dictionary<string, object?>
-            {
-                ["pluginId"] = pluginId
-            });
-            return new { ok = true, persisted = true, delivered = false };
+            var session = await EnsureSessionAsync(registration, cancellationToken);
+            return await session.InvokeAsync(
+                "onedesk.configure",
+                new { settings, source = new { kind = "system" } },
+                InvocationTimeout,
+                cancellationToken);
         }
-
-        var process = await EnsureProcessAsync(registration, cancellationToken);
-        var payload = new
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            jsonrpc = "2.0",
-            id = Interlocked.Increment(ref _rpcSequence),
-            method = "onedesk.configure",
-            @params = new
-            {
-                settings,
-                source = new { kind = "system" }
-            }
-        };
-
-        await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload, JsonOptions));
-        await process.StandardInput.FlushAsync();
-        var line = await process.StandardOutput.ReadLineAsync(cancellationToken);
-        _logs.Append("desktop", "Info", "Plugin", "Submitted plugin settings", new Dictionary<string, object?>
+            return Error("PluginConfigureFailed", error.Message);
+        }
+        finally
         {
-            ["pluginId"] = pluginId
-        });
-
-        return string.IsNullOrWhiteSpace(line)
-            ? new { ok = true, persisted = true, delivered = false, message = "插件未返回设置响应" }
-            : JsonSerializer.Deserialize<JsonElement>(line);
+            if (registration.Manifest.Backend?.Persistent != true) await StopSessionAsync(registration);
+        }
     }
 
-    private Task<Process> EnsureProcessAsync(PluginRegistration registration, CancellationToken cancellationToken)
+    private async Task<PluginProcessSession> EnsureSessionAsync(PluginRegistration registration, CancellationToken cancellationToken)
     {
-        if (registration.Process is { HasExited: false } process)
+        await registration.Lifecycle.WaitAsync(cancellationToken);
+        try
         {
-            return Task.FromResult(process);
+            if (registration.Session is { IsRunning: true } active) return active;
+            if (registration.Session is { } stopped)
+            {
+                registration.Session = null;
+                await stopped.DisposeAsync();
+            }
+            if (registration.Removed) throw new InvalidOperationException("PluginRegistrationRemoved");
+            var artifact = SelectArtifact(registration.Manifest.Backend?.Artifacts ?? [])
+                ?? throw new InvalidOperationException($"PluginArtifactMissing:{registration.Manifest.Id}");
+            var startInfo = BuildStartInfo(registration.PackageDirectory, artifact);
+            var session = PluginProcessSession.Start(
+                startInfo,
+                registration.Manifest.Id,
+                _logs,
+                (method, parameters, token) => HandleOriginatedRequestAsync(registration.Manifest.Id, method, parameters, token));
+            registration.Session = session;
+            try
+            {
+                var handshake = await session.InvokeAsync(
+                    "onedesk.handshake",
+                    new { pluginId = registration.Manifest.Id, protocolVersion = 1, host = "OneDesk" },
+                    HandshakeTimeout,
+                    cancellationToken);
+                if (handshake.TryGetProperty("error", out var error))
+                {
+                    throw new InvalidOperationException($"PluginHandshakeRejected:{error}");
+                }
+                registration.RestartAttempts = 0;
+                if (registration.Committed) _ = MonitorPersistentSessionAsync(registration, session);
+                return session;
+            }
+            catch
+            {
+                registration.Session = null;
+                await session.DisposeAsync();
+                throw;
+            }
         }
-
-        var artifact = SelectArtifact(registration.Manifest.Backend?.Artifacts ?? []);
-        if (artifact is null)
+        finally
         {
-            throw new InvalidOperationException($"Plugin {registration.Manifest.Id} does not provide an artifact for this platform.");
+            registration.Lifecycle.Release();
         }
+    }
 
-        var executable = ResolveArtifactExecutable(registration.PackageDirectory, artifact);
+    private async Task MonitorPersistentSessionAsync(PluginRegistration registration, PluginProcessSession session)
+    {
+        await session.Completion;
+        if (registration.Removed || registration.Manifest.Backend?.Persistent != true || Volatile.Read(ref _disposed) != 0) return;
+        while (!registration.Removed && registration.Manifest.Backend?.Persistent == true && Volatile.Read(ref _disposed) == 0)
+        {
+            if (Interlocked.Increment(ref registration.RestartAttempts) > 3)
+            {
+                _logs.Append("desktop", "Error", "Plugin", "常驻插件连续崩溃，已停止自动重启", new Dictionary<string, object?>
+                {
+                    ["pluginId"] = registration.Manifest.Id,
+                });
+                return;
+            }
+            await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, registration.RestartAttempts)));
+            try
+            {
+                await EnsureSessionAsync(registration, CancellationToken.None);
+                return;
+            }
+            catch (Exception error)
+            {
+                _logs.Append("desktop", "Error", "Plugin", "常驻插件重启失败", new Dictionary<string, object?>
+                {
+                    ["pluginId"] = registration.Manifest.Id,
+                    ["attempt"] = registration.RestartAttempts,
+                    ["error"] = error.Message,
+                });
+            }
+        }
+    }
+
+    private Task<object?> HandleOriginatedRequestAsync(string pluginId, string method, JsonElement parameters, CancellationToken cancellationToken)
+    {
+        var handler = _originatedRequestHandler;
+        if (handler is null) return Task.FromResult<object?>(Error("PluginHostMethodUnavailable", "宿主尚未注册插件请求处理器"));
+        return handler(pluginId, method, parameters, cancellationToken);
+    }
+
+    private static ProcessStartInfo BuildStartInfo(string packageDirectory, PluginPlatformArtifact artifact)
+    {
+        var commandHead = artifact.Command.FirstOrDefault();
+        var executable = string.IsNullOrWhiteSpace(commandHead) ? ResolvePackagePath(packageDirectory, artifact.Path) : commandHead;
         var startInfo = new ProcessStartInfo
         {
             FileName = executable,
-            WorkingDirectory = Path.GetDirectoryName(executable) ?? registration.PackageDirectory,
+            WorkingDirectory = string.IsNullOrWhiteSpace(packageDirectory) ? Environment.CurrentDirectory : Path.GetFullPath(packageDirectory),
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
         };
-
-        foreach (var argument in artifact.Command.Skip(1))
+        foreach (var argument in artifact.Command.Skip(1)) startInfo.ArgumentList.Add(argument);
+        if (!string.IsNullOrWhiteSpace(commandHead) && !string.IsNullOrWhiteSpace(artifact.Path) && artifact.Command.Count == 1)
         {
-            startInfo.ArgumentList.Add(argument);
+            startInfo.ArgumentList.Add(ResolvePackagePath(packageDirectory, artifact.Path));
         }
+        return startInfo;
+    }
 
-        var started = Process.Start(startInfo) ?? throw new InvalidOperationException($"Failed to start plugin {registration.Manifest.Id}.");
-        registration.Process = started;
-        _processes.Add(started);
-        _logs.Append("desktop", "Info", "Plugin", "Started plugin backend process", new Dictionary<string, object?>
+    private static string ResolvePackagePath(string packageDirectory, string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(packageDirectory)) return Path.GetFullPath(relativePath);
+        var root = Path.GetFullPath(packageDirectory);
+        var path = Path.GetFullPath(Path.IsPathRooted(relativePath) ? relativePath : Path.Combine(root, relativePath));
+        if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && !string.Equals(path, root, StringComparison.OrdinalIgnoreCase))
         {
-            ["pluginId"] = registration.Manifest.Id,
-            ["path"] = executable
-        });
-        return Task.FromResult(started);
+            throw new InvalidDataException("PluginArtifactEscapesPackage");
+        }
+        if (!File.Exists(path)) throw new FileNotFoundException("PluginArtifactMissing", path);
+        return path;
     }
 
     private static PluginPlatformArtifact? SelectArtifact(IReadOnlyList<PluginPlatformArtifact> artifacts)
@@ -212,37 +355,95 @@ public sealed class PluginHostService : IDisposable
             string.Equals(artifact.Architecture, architecture, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string ResolveArtifactExecutable(string packageDirectory, PluginPlatformArtifact artifact)
+    public static void ValidateManifest(PluginManifest manifest, string packageDirectory)
     {
-        var commandHead = artifact.Command.FirstOrDefault();
-        var path = string.IsNullOrWhiteSpace(commandHead) ? artifact.Path : commandHead;
-        return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(packageDirectory, path));
+        if (string.IsNullOrWhiteSpace(manifest.Id) || string.IsNullOrWhiteSpace(manifest.Name) || string.IsNullOrWhiteSpace(manifest.Version))
+            throw new InvalidDataException("PluginManifestIdentityMissing");
+        if (manifest.Frontend is not null) ResolvePackagePath(packageDirectory, manifest.Frontend.Entry);
+        if (manifest.Backend is not null && !string.Equals(manifest.Backend.Protocol, "json-rpc", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("PluginProtocolUnsupported");
     }
+
+    private static async Task StopSessionAsync(PluginRegistration registration)
+    {
+        await registration.Lifecycle.WaitAsync();
+        try
+        {
+            var session = registration.Session;
+            registration.Session = null;
+            if (session is not null) await session.DisposeAsync();
+        }
+        finally
+        {
+            registration.Lifecycle.Release();
+        }
+    }
+
+    private static object Error(string errorCode, string message) => new { ok = false, errorCode, message };
 
     public void Dispose()
     {
-        foreach (var process in _processes)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        foreach (var registration in _plugins.Values)
         {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-
-                process.Dispose();
-            }
-            catch
-            {
-                // 插件清理失败不能阻止 OneDesk 退出。
-            }
+            registration.Removed = true;
+            StopSessionAsync(registration).GetAwaiter().GetResult();
+            registration.Lifecycle.Dispose();
         }
+        _plugins.Clear();
+        _registrationGate.Dispose();
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    private sealed record PluginRegistration(PluginManifest Manifest, string PackageDirectory)
+    public sealed class PreparedPluginRegistration : IAsyncDisposable
     {
-        public Process? Process { get; set; }
+        private readonly PluginHostService _host;
+        private readonly PluginRegistration _candidate;
+        private int _state;
+
+        internal PreparedPluginRegistration(PluginHostService host, PluginRegistration candidate)
+        {
+            _host = host;
+            _candidate = candidate;
+        }
+
+        public PluginManifest Manifest => _candidate.Manifest;
+
+        public async Task CommitAsync(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.CompareExchange(ref _state, 1, 0) != 0)
+            {
+                throw new InvalidOperationException("PluginRegistrationAlreadyFinished");
+            }
+
+            try
+            {
+                await _host.CommitPreparedAsync(_candidate, cancellationToken);
+                Volatile.Write(ref _state, 2);
+            }
+            catch
+            {
+                // 等待注册锁时取消并不代表候选已提交；恢复为可释放状态，确保候选进程不会泄漏。
+                // 如果原子替换已经完成，则保持提交状态，避免 DisposeAsync 误停当前生效的插件。
+                Volatile.Write(ref _state, _candidate.Committed ? 2 : 0);
+                throw;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.CompareExchange(ref _state, 3, 0) != 0) return;
+            await DiscardPreparedAsync(_candidate);
+        }
+    }
+
+    internal sealed record PluginRegistration(PluginManifest Manifest, string PackageDirectory)
+    {
+        public SemaphoreSlim Lifecycle { get; } = new(1, 1);
+        public PluginProcessSession? Session { get; set; }
+        public int RestartAttempts;
+        public volatile bool Removed;
+        public volatile bool Committed;
     }
 }

@@ -2,9 +2,12 @@ import SwiftUI
 
 @main
 struct OneDeskApp: App {
+    private let runtime = MobileRuntime()
+
     var body: some Scene {
         WindowGroup {
-            OneDeskWebView()
+            OneDeskWebView(runtime: runtime)
+                .ignoresSafeArea()
         }
     }
 }

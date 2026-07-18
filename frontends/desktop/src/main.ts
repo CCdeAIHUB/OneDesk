@@ -1,11 +1,9 @@
 import { createApp } from "vue";
 import { addCollection } from "@iconify/vue";
-import fluentIcons from "@iconify-json/fluent/icons.json";
-import solarIcons from "@iconify-json/solar/icons.json";
+import { iconCollections } from "./generatedIconCollections";
 import App from "./App.vue";
 import "./styles.css";
 
-addCollection(solarIcons);
-addCollection(fluentIcons);
+iconCollections.forEach((collection) => addCollection(collection));
 
 createApp(App).mount("#app");

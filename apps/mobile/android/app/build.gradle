@@ -1,10 +1,20 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id "com.android.application"
 }
 
+def localAppData = System.getenv("LOCALAPPDATA")
+def windowsNativeBuildDirectory = localAppData == null
+    ? null
+    : file("${localAppData}/OneDeskBuild/android-cxx")
+def capabilityCatalogFile = file("../../../../packages/protocol/capabilities.json")
+def generatedProtocolTestResources = layout.buildDirectory.dir("generated/onedesk-protocol-test-resources")
+
 android {
-    namespace "cc.onedesk.mobile"
+    namespace = "cc.onedesk.mobile"
     compileSdk 36
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId "cc.onedesk.mobile"
@@ -12,6 +22,16 @@ android {
         targetSdk 36
         versionCode 1
         versionName "0.1.0"
+
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++20"
+            }
+        }
     }
 
     compileOptions {
@@ -22,6 +42,22 @@ android {
     sourceSets {
         main {
             assets.srcDirs += file("../../../../frontends/mobile/dist")
+            assets.srcDirs += file("../../../../packages/protocol")
+        }
+        test {
+            resources.srcDirs += generatedProtocolTestResources
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+            // OpenSSL 的 GNU Make 依赖文件无法可靠转义路径空格，Windows 中间产物
+            // 因此固定放入无空格缓存目录；APK 输出位置不受影响。
+            if (windowsNativeBuildDirectory != null) {
+                buildStagingDirectory windowsNativeBuildDirectory
+            }
         }
     }
 }
@@ -33,6 +69,8 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:1.6.1"
     implementation "androidx.camera:camera-view:1.6.1"
     implementation "com.google.zxing:core:3.5.4"
+
+    testImplementation "junit:junit:4.13.2"
 }
 
 def mobileFrontendDir = file("../../../../frontends/mobile")
@@ -53,4 +91,21 @@ tasks.register("buildMobileFrontend", Exec) {
 
 tasks.named("preBuild").configure {
     dependsOn("buildMobileFrontend")
+}
+
+def generateProtocolTestResources = tasks.register("generateProtocolTestResources") {
+    inputs.file(capabilityCatalogFile)
+    outputs.dir(generatedProtocolTestResources)
+    doLast {
+        def catalog = new JsonSlurper().parse(capabilityCatalogFile)
+        def output = generatedProtocolTestResources.get().file("canonical-capability-ids.txt").asFile
+        output.parentFile.mkdirs()
+        output.setText(catalog.capabilities.collect { it.id as String }.join("\n"), "UTF-8")
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name == "processDebugUnitTestJavaRes") {
+        task.dependsOn(generateProtocolTestResources)
+    }
 }

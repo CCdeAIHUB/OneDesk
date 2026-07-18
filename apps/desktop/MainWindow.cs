@@ -1,71 +1,72 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Layout;
 using Avalonia.Media;
 using OneDesk.Desktop.Services;
+using OneDesk.Desktop.Shell;
+using OneDesk.Desktop.Storage;
+using Xilium.CefGlue.Avalonia;
 
 namespace OneDesk.Desktop;
 
 public sealed class MainWindow : Window
 {
-    public MainWindow(PairingService pairing, FrontendNetworkPolicy networkPolicy)
+    private readonly AvaloniaCefBrowser _browser;
+    private readonly StructuredLogStore _logs;
+    private readonly DeviceRegistry _devices;
+
+    public MainWindow(
+        DesktopNativeBridge nativeBridge,
+        AvaloniaDesktopShellPlatform platform,
+        FrontendNetworkPolicy networkPolicy,
+        StructuredLogStore logs,
+        DeviceRegistry devices)
     {
+        _logs = logs;
+        _devices = devices;
+        platform.Attach(this);
+
         Title = "OneDesk";
-        Width = 1280;
-        Height = 820;
-        MinWidth = 1024;
+        Width = 1200;
+        Height = 780;
+        MinWidth = 1120;
         MinHeight = 720;
+        SystemDecorations = SystemDecorations.None;
         ExtendClientAreaToDecorationsHint = true;
         ExtendClientAreaChromeHints = Avalonia.Platform.ExtendClientAreaChromeHints.NoChrome;
-        SystemDecorations = SystemDecorations.None;
         TransparencyLevelHint =
         [
             WindowTransparencyLevel.Mica,
             WindowTransparencyLevel.AcrylicBlur,
             WindowTransparencyLevel.Blur,
-            WindowTransparencyLevel.Transparent
+            WindowTransparencyLevel.Transparent,
         ];
         Background = Brushes.Transparent;
+        Icon = TrayIconFactory.CreateOneDeskIcon();
 
-        var code = pairing.GenerateVerificationCode();
-        var qrPayload = pairing.CreateQrPayload("127.0.0.1", 48320, code);
+        var frontendRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+        var indexPath = Path.Combine(frontendRoot, "index.html");
+        if (!File.Exists(indexPath)) throw new FileNotFoundException("未找到桌面前端入口文件", indexPath);
+
         networkPolicy.BlockDirectFrontendNetworking = true;
-
-        Content = new Border
+        _browser = new AvaloniaCefBrowser
         {
-            Margin = new Thickness(0),
-            CornerRadius = new CornerRadius(0),
-            Background = new SolidColorBrush(Color.FromArgb(232, 248, 252, 255)),
-            Child = new Grid
-            {
-                RowDefinitions = RowDefinitions.Parse("Auto,*"),
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "OneDesk desktop shell",
-                        FontSize = 26,
-                        FontWeight = FontWeight.SemiBold,
-                        Margin = new Thickness(24, 20, 24, 8)
-                    },
-                    new TextBlock
-                    {
-                        Text = $"Chromium file frontend host placeholder\nNetwork blocked: {networkPolicy.BlockDirectFrontendNetworking}\nPairing QR payload: {qrPayload}",
-                        Margin = new Thickness(24, 74, 24, 24),
-                        TextWrapping = TextWrapping.Wrap
-                    }
-                }
-            }
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch,
+            RequestHandler = new CefNetworkRequestHandler(networkPolicy, frontendRoot),
         };
+        _browser.RegisterJavascriptObject(nativeBridge, "OneDeskNative");
+        _browser.LoadError += (_, eventArgs) => LogBrowserError("CEF 页面加载失败", eventArgs.ErrorText);
+        _browser.JavascriptUncaughException += (_, eventArgs) => LogBrowserError("CEF JavaScript 未捕获异常", eventArgs.Message);
+        Content = _browser;
+        Opened += (_, _) => _browser.Address = new Uri(indexPath).AbsoluteUri;
     }
 
-    protected override void OnOpened(EventArgs e)
+    private void LogBrowserError(string message, string error)
     {
-        base.OnOpened(e);
-        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime lifetime)
+        _logs.Append(_devices.DesktopIdentity.DeviceId, "Error", "Chromium", message, new Dictionary<string, object?>
         {
-            lifetime.ShutdownMode = ShutdownMode.OnMainWindowClose;
-        }
+            ["error"] = error,
+            ["address"] = _browser.Address,
+        });
     }
 }

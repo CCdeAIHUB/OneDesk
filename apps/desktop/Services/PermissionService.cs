@@ -26,6 +26,7 @@ public sealed class PermissionService
 
     public void Grant(string sourceKey, string capability)
     {
+        capability = CapabilityDirectoryService.NormalizeId(capability);
         var permissions = _grants.GetOrAdd(sourceKey, _ => []);
         lock (permissions)
         {
@@ -36,6 +37,7 @@ public sealed class PermissionService
 
     public void Revoke(string sourceKey, string capability)
     {
+        capability = CapabilityDirectoryService.NormalizeId(capability);
         if (!_grants.TryGetValue(sourceKey, out var permissions))
         {
             return;
@@ -69,6 +71,7 @@ public sealed class PermissionService
             return true;
         }
 
+        capability = CapabilityDirectoryService.NormalizeId(capability);
         var key = SourceKey(source);
         if (!_grants.TryGetValue(key, out var permissions))
         {
@@ -102,11 +105,26 @@ public sealed class PermissionService
 
         try
         {
-            using var stream = File.OpenRead(_grantStorePath);
-            var store = JsonSerializer.Deserialize<PermissionGrantStore>(stream, _jsonOptions);
+            PermissionGrantStore? store;
+            using (var stream = File.OpenRead(_grantStorePath))
+            {
+                store = JsonSerializer.Deserialize<PermissionGrantStore>(stream, _jsonOptions);
+            }
+
+            var migrated = false;
             foreach (var grant in store?.Grants ?? [])
             {
-                _grants[grant.SourceKey] = grant.Capabilities.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var capabilities = grant.Capabilities
+                    .Select(CapabilityDirectoryService.NormalizeId)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                migrated |= !capabilities.SetEquals(grant.Capabilities);
+                _grants[grant.SourceKey] = capabilities;
+            }
+
+            if (migrated)
+            {
+                // 旧权限 ID 只保留读取兼容；加载成功后立即回写标准 ID，避免长期维护双重语义。
+                Save();
             }
         }
         catch
