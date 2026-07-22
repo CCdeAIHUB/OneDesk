@@ -75,6 +75,11 @@ const currentGridStyle = computed<Record<string, string>>(() => {
   if (!page) return {} as Record<string, string>;
   return buildGridStyle(page, viewportWidth.value, viewportHeight.value);
 });
+// 页面索引切换后先把新页面背景铺到舞台上，旧页面只在其上退场，避免动画间隙露出 WebView 默认底色。
+const pageStageStyle = computed<Record<string, string>>(() => {
+  const page = currentPage.value;
+  return page ? pageBackgroundStyle(page) : { background: "#ffffff" };
+});
 
 onMounted(() => {
   void loadKnownDesktops();
@@ -422,12 +427,12 @@ function emptyScheme(desktopId: string): CachedScheme {
     </section>
   </main>
 
-  <main v-else class="relative h-screen w-screen overflow-hidden bg-white text-slate-950">
-    <Transition :name="transitionName" mode="out-in">
+  <main v-else class="relative h-screen w-screen overflow-hidden text-slate-950" :style="pageStageStyle">
+    <Transition :name="transitionName">
       <section
         v-if="currentPage"
         :key="currentPage.id"
-        class="relative h-full w-full overflow-hidden touch-none"
+        class="page-surface overflow-hidden touch-none"
         :style="pageBackgroundStyle(currentPage)"
         @touchstart="handleTouchStart('page', $event)"
         @touchmove.prevent="handleTouchMove('page', $event)"
@@ -485,7 +490,7 @@ function emptyScheme(desktopId: string): CachedScheme {
         </div>
       </section>
 
-      <section v-else key="empty" class="grid h-full w-full place-items-center bg-white p-6 text-center">
+      <section v-else key="empty" class="page-surface grid place-items-center bg-white p-6 text-center">
         <div class="max-w-xs">
           <span class="mx-auto grid size-12 place-items-center rounded-2xl bg-slate-100 text-slate-400">
             <Icon icon="solar:widget-6-linear" class="size-6" />
@@ -504,24 +509,35 @@ function emptyScheme(desktopId: string): CachedScheme {
 </template>
 
 <style scoped>
-.page-fade-enter-active,
+.page-surface {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.page-fade-enter-active {
+  z-index: 0;
+  transition: none;
+}
+
 .page-fade-leave-active {
+  z-index: 1;
   transition: opacity 180ms ease;
 }
 
-.page-fade-enter-from,
 .page-fade-leave-to {
   opacity: 0;
 }
 
-.page-slide-enter-active,
-.page-slide-leave-active {
-  transition: transform 210ms ease, opacity 210ms ease;
+.page-slide-enter-active {
+  z-index: 0;
+  transition: none;
 }
 
-.page-slide-enter-from {
-  transform: translateX(4%);
-  opacity: 0;
+.page-slide-leave-active {
+  z-index: 1;
+  transition: transform 210ms ease, opacity 210ms ease;
 }
 
 .page-slide-leave-to {
@@ -531,6 +547,7 @@ function emptyScheme(desktopId: string): CachedScheme {
 
 .page-none-enter-active,
 .page-none-leave-active {
+  z-index: 1;
   transition: none;
 }
 

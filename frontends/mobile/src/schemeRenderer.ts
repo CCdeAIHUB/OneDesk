@@ -44,9 +44,10 @@ export function componentStyle(bundle: ComponentBundle | undefined): Record<stri
   const config = bundle?.visualConfig;
   if (!config) return { background: "#e2e8f0" };
   const background = config.background;
+  // 格子负责页面间距和轮廓，组件根节点必须填满格子；外边距会让 100% 尺寸节点产生偏移并被裁剪。
   const style: Record<string, string> = {
+    boxSizing: "border-box",
     borderRadius: `${Math.max(0, config.base?.borderRadius ?? 0)}px`,
-    margin: `${Math.max(0, config.base?.margin ?? 0)}px`,
   };
   if (background.kind === "solid") style.background = background.value || "#0ea5e9";
   else if (background.kind === "gradient") style.background = `linear-gradient(135deg, ${background.value || "#0ea5e9"}, ${background.secondaryValue || "#22d3ee"})`;
