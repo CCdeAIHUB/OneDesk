@@ -53,6 +53,8 @@ const showCodeSwitchDialog = ref(false);
 const showActionDesignerDialog = ref(false);
 const showDeviceDialog = ref(false);
 const showSchemeApplyDialog = ref(false);
+const schemeApplyState = ref<"idle" | "applying" | "failed">("idle");
+const schemeApplyError = ref("");
 const exporting = ref(false);
 const exportProgress = ref(0);
 const isMaximized = ref(false);
@@ -317,7 +319,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   else if (showCodeSwitchDialog.value) showCodeSwitchDialog.value = false;
   else if (showPermissionDialog.value) closePermissionDialog();
   else if (showActionDesignerDialog.value) showActionDesignerDialog.value = false;
-  else if (showSchemeApplyDialog.value) showSchemeApplyDialog.value = false;
+  else if (showSchemeApplyDialog.value && schemeApplyState.value !== "applying") closeSchemeApplyDialog();
   else if (showDeviceDialog.value) showDeviceDialog.value = false;
   else if (showResourcePicker.value) showResourcePicker.value = false;
   else return;
@@ -1481,7 +1483,16 @@ async function saveScheme() {
 function openSchemeApplyDialog() {
   if (!selectedScheme.value) return;
   applyTargetDeviceId.value = currentDevice.value?.deviceId ?? trustedDevices.value[0]?.deviceId ?? "";
+  schemeApplyState.value = "idle";
+  schemeApplyError.value = "";
   showSchemeApplyDialog.value = true;
+}
+
+function closeSchemeApplyDialog() {
+  if (schemeApplyState.value === "applying") return;
+  showSchemeApplyDialog.value = false;
+  schemeApplyState.value = "idle";
+  schemeApplyError.value = "";
 }
 
 function isDeviceOnline(deviceId?: string | null) {
@@ -1490,16 +1501,31 @@ function isDeviceOnline(deviceId?: string | null) {
 }
 
 async function confirmApplySchemeToDevice() {
+  if (schemeApplyState.value === "applying") return;
   if (!selectedScheme.value || !applyTargetDevice.value) {
     announceToast("请先选择要应用的移动设备");
     return;
   }
   const target = applyTargetDevice.value;
-  const result = await applyScheme(selectedScheme.value.id, target.deviceId);
-  if (!result) return;
-  showSchemeApplyDialog.value = false;
-  await refreshDeviceConnectivity();
-  announceToast(result.message);
+  schemeApplyState.value = "applying";
+  schemeApplyError.value = "";
+  try {
+    const result = await applyScheme(selectedScheme.value.id, target.deviceId);
+    if (!result) {
+      schemeApplyState.value = "failed";
+      schemeApplyError.value = workspace.toast || "方案应用失败，请检查设备连接和日志。";
+      return;
+    }
+    await refreshDeviceConnectivity();
+    showSchemeApplyDialog.value = false;
+    schemeApplyState.value = "idle";
+    announceToast(result.message);
+  } catch (error) {
+    console.error("applyScheme failed", error);
+    schemeApplyState.value = "failed";
+    schemeApplyError.value = error instanceof Error ? error.message : "方案应用失败，请检查设备连接和日志。";
+    announceToast("方案应用失败");
+  }
 }
 
 function addPageToScheme(pageId: string) {
@@ -2466,7 +2492,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             <h3 class="text-[16px] font-semibold">应用方案到设备</h3>
             <p class="mt-1 text-[12px] text-slate-500">选择要应用的移动设备。在线设备会自动刷新，离线设备会在下次连接时自动推送。</p>
           </div>
-          <button class="grid size-8 place-items-center rounded-full bg-slate-100 dark:bg-slate-900" @click="showSchemeApplyDialog = false">
+          <button class="grid size-8 place-items-center rounded-full bg-slate-100 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-900" :disabled="schemeApplyState === 'applying'" @click="closeSchemeApplyDialog">
             <Icon icon="solar:close-circle-bold-duotone" class="size-5" />
           </button>
         </div>
@@ -2477,6 +2503,7 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
             :key="device.deviceId"
             class="flex items-center justify-between rounded-2xl border px-4 py-3 text-left transition"
             :class="applyTargetDeviceId === device.deviceId ? 'border-sky-500 bg-sky-50 text-sky-700 dark:bg-sky-950/30 dark:text-sky-200' : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900'"
+            :disabled="schemeApplyState === 'applying'"
             @click="applyTargetDeviceId = device.deviceId"
           >
             <span>
@@ -2488,9 +2515,26 @@ async function savePluginSettings(plugin?: PluginManifest | null) {
           <div v-if="!trustedDevices.length" class="rounded-2xl bg-slate-50 p-5 text-center text-[13px] text-slate-500 dark:bg-slate-900">暂无已信任移动设备，请先在设备管理中生成验证码并完成连接。</div>
         </div>
 
+        <div v-if="schemeApplyState === 'applying'" class="scheme-apply-status" role="status" aria-live="polite">
+          <div class="flex items-center gap-3">
+            <Icon icon="solar:refresh-circle-bold" class="size-5 shrink-0 animate-spin text-sky-500" />
+            <div>
+              <p class="text-[13px] font-semibold">正在应用方案</p>
+              <p class="mt-0.5 text-[11px] text-slate-500">正在准备资源、传输方案并等待设备确认，请勿关闭此窗口。</p>
+            </div>
+          </div>
+          <div class="scheme-apply-progress" aria-hidden="true"><span></span></div>
+        </div>
+        <div v-else-if="schemeApplyState === 'failed'" class="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[12px] text-rose-600 dark:border-rose-900/70 dark:bg-rose-950/35 dark:text-rose-300" role="alert">
+          {{ schemeApplyError }}
+        </div>
+
         <div class="mt-5 flex justify-end gap-2">
-          <button class="header-surface-button" @click="showSchemeApplyDialog = false">取消</button>
-          <button class="header-primary-button" :disabled="!trustedDevices.length" @click="confirmApplySchemeToDevice">应用</button>
+          <button class="header-surface-button disabled:cursor-not-allowed disabled:opacity-45" :disabled="schemeApplyState === 'applying'" @click="closeSchemeApplyDialog">取消</button>
+          <button class="header-primary-button gap-2 disabled:cursor-not-allowed disabled:opacity-55" :disabled="!trustedDevices.length || schemeApplyState === 'applying'" @click="confirmApplySchemeToDevice">
+            <Icon v-if="schemeApplyState === 'applying'" icon="solar:refresh-circle-bold" class="size-4 animate-spin" />
+            {{ schemeApplyState === 'applying' ? '应用中' : '应用' }}
+          </button>
         </div>
       </div>
     </div>

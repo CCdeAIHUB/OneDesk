@@ -1377,6 +1377,47 @@ select.field {
   }
 }
 
+.scheme-apply-status {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid rgb(14 165 233 / 0.24);
+  border-radius: 16px;
+  background: rgb(240 249 255);
+}
+
+.dark .scheme-apply-status {
+  border-color: rgb(14 165 233 / 0.3);
+  background: rgb(8 47 73 / 0.42);
+}
+
+.scheme-apply-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(14 165 233 / 0.14);
+}
+
+.scheme-apply-progress span {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: rgb(14 165 233);
+  animation: scheme-apply-progress 1.15s ease-in-out infinite;
+}
+
+@keyframes scheme-apply-progress {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(295%);
+  }
+}
+
 .page-settings-panel .editor-section-card {
   padding: 0;
 }

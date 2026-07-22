@@ -24,6 +24,7 @@ class SchemeCacheService(
         return try { JSONObject(raw) } catch (_: Exception) { null }
     }
 
+    @Synchronized
     fun downloadAndCache(desktop: JSONObject, descriptor: JSONObject): SchemeCacheResult {
         val desktopId = desktop.getString("desktopId")
         val version = descriptor.optString("version", "0")
@@ -143,7 +144,9 @@ class SchemeCacheService(
         val safeName = "${ownerKind}-${ownerId}-${File(fileName).name}".replace(Regex("[^A-Za-z0-9._-]"), "_")
         val destination = File(root, safeName)
         if (destination.exists() && destination.length() > 0) return destination
-        val temporary = File(root, "$safeName.tmp")
+        // 推送事件、连接刷新和前端主动刷新可能来自不同线程。外层缓存事务已串行化，
+        // 这里仍使用唯一临时文件，避免异常恢复或未来多实例访问时互相覆盖下载内容。
+        val temporary = File.createTempFile("$safeName.", ".tmp", root)
         FileOutputStream(temporary).use { output ->
             var offset = 0L
             var total = Long.MAX_VALUE
@@ -170,8 +173,12 @@ class SchemeCacheService(
                 if (chunk.optBoolean("complete")) break
             }
         }
-        if (destination.exists() && !destination.delete()) throw IllegalStateException("无法替换旧资源缓存")
-        if (!temporary.renameTo(destination)) throw IllegalStateException("无法提交资源缓存")
+        try {
+            SchemeAssetFileStore.commit(temporary, destination)
+        } catch (error: Exception) {
+            temporary.delete()
+            throw IllegalStateException("无法提交资源缓存：${error.message ?: "文件替换失败"}", error)
+        }
         return destination
     }
 
