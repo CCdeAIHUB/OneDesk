@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MobileGatewayClient(
     private val deviceId: () -> String,
+    private val stableDeviceKey: () -> String,
     private val logs: MobileLogStore,
     private val onSchemeEvent: (desktop: JSONObject, descriptor: JSONObject, eventId: String) -> Boolean,
     private val onJsApiEvent: (capability: String, payload: JSONObject, requestId: String, sourceKey: String) -> JSONObject,
@@ -129,6 +130,7 @@ class MobileGatewayClient(
             .put("type", type)
             .put("requestId", "req-${UUID.randomUUID()}")
             .put("deviceId", deviceId())
+            .put("stableDeviceKey", stableDeviceKey())
             .put("displayName", Build.MODEL ?: "Android")
             .put("platform", "android")
             .put("architecture", System.getProperty("os.arch") ?: "unknown")

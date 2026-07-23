@@ -23,6 +23,7 @@
     "PairingRequestContract": [
       { "name": "verificationCode", "type": "string" },
       { "name": "clientNonce", "type": "string" },
+      { "name": "stableDeviceKey", "type": "string", "optional": true },
       { "name": "mobileIdentity", "type": "ProtocolDeviceIdentity" }
     ],
     "PairingResponseContract": [

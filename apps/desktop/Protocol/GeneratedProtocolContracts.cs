@@ -1,5 +1,5 @@
 // 此文件由 packages/protocol/schema/onedesk.protocol.json 生成，请勿手工修改。
-// schema-sha256: 04aedd08890925036ff61bc67b943c1af80a039c82a6f3a09af3e373137022ee
+// schema-sha256: d9643bed89f2dde0c2a7f1a781c1ff539cc0f45c9f90495b5c9597b44c0de77b
 using System.Text.Json;
 
 namespace OneDesk.Desktop.Transport;
@@ -7,7 +7,7 @@ namespace OneDesk.Desktop.Transport;
 public static class OneDeskProtocol
 {
     public const int Version = 1;
-    public const string SchemaSha256 = "04aedd08890925036ff61bc67b943c1af80a039c82a6f3a09af3e373137022ee";
+    public const string SchemaSha256 = "d9643bed89f2dde0c2a7f1a781c1ff539cc0f45c9f90495b5c9597b44c0de77b";
 }
 
 public enum GatewayMessageType
@@ -49,6 +49,7 @@ public sealed record ProtocolTrustedSource(
 public sealed record PairingRequestContract(
     string VerificationCode,
     string ClientNonce,
+    string? StableDeviceKey,
     ProtocolDeviceIdentity MobileIdentity
 );
 

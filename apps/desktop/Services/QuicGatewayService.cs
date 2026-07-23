@@ -313,11 +313,19 @@ public sealed class QuicGatewayService : IDisposable
             return GatewayResponse.Fail("InvalidVerificationCode", "验证码无效、过期或已被使用");
         }
 
+        var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? "OneDesk Mobile" : request.DisplayName;
+        var existingPairing = _pairing.FindPairingIdentity(request.StableDeviceKey, displayName);
         var identity = _devices.RegisterMobile(
-            string.IsNullOrWhiteSpace(request.DisplayName) ? "OneDesk Mobile" : request.DisplayName,
+            displayName,
             string.IsNullOrWhiteSpace(request.Platform) ? "android" : request.Platform,
-            string.IsNullOrWhiteSpace(request.Architecture) ? "unknown" : request.Architecture);
-        var credential = _pairing.CreateTrustCredential(identity.DeviceId, identity.DisplayName);
+            string.IsNullOrWhiteSpace(request.Architecture) ? "unknown" : request.Architecture,
+            existingPairing?.DeviceId);
+        var credential = _pairing.CreateTrustCredential(
+            identity.DeviceId,
+            identity.DisplayName,
+            request.StableDeviceKey,
+            identity.Platform,
+            identity.Architecture);
         RegisterPeer(identity, session, HashToken(credential.Token));
         AppendMobileLogs(identity.DeviceId, request.Logs);
         var snapshot = await BuildSchemeSnapshotAsync(identity.DeviceId, cancellationToken);
@@ -337,6 +345,7 @@ public sealed class QuicGatewayService : IDisposable
             return GatewayResponse.Fail("InvalidTrustCredential", "长期信任凭据无效");
         }
 
+        _pairing.BindStableDeviceKey(request.DeviceId!, request.StableDeviceKey, request.Platform, request.Architecture);
         var identity = EnsureMobileIdentity(request);
         RegisterPeer(identity, session, HashToken(request.TrustCredential!));
         AppendMobileLogs(identity.DeviceId, request.Logs);
@@ -761,6 +770,7 @@ public sealed record GatewayRequest(
     string? RequestId,
     string? Code,
     string? DeviceId,
+    string? StableDeviceKey,
     string? DisplayName,
     string? Platform,
     string? Architecture,

@@ -41,11 +41,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var deviceTriggers: AndroidDeviceTriggerMonitor
     private lateinit var scanner: QrScannerController
     private val prefs by lazy { getSharedPreferences("onedesk-mobile", Context.MODE_PRIVATE) }
-    private val localDeviceId by lazy {
-        prefs.getString("deviceId", null) ?: "android-${UUID.randomUUID()}".also {
-            prefs.edit().putString("deviceId", it).apply()
-        }
-    }
+    private val stableDeviceKey by lazy { AndroidDeviceIdentity.stableDeviceKey(this) }
+    private val localDeviceId by lazy { "mobile-${stableDeviceKey.substringAfter(':').take(32)}" }
 
     private fun currentDeviceId(): String = prefs.getString("assignedDeviceId", null) ?: localDeviceId
 
@@ -62,6 +59,7 @@ class MainActivity : ComponentActivity() {
 
         gateway = MobileGatewayClient(
             deviceId = { currentDeviceId() },
+            stableDeviceKey = { stableDeviceKey },
             logs = logs,
             onSchemeEvent = { desktop, descriptor, eventId -> handleSchemeEvent(desktop, descriptor, eventId) },
             onJsApiEvent = { capability, payload, requestId, sourceKey ->
@@ -346,6 +344,7 @@ class MainActivity : ComponentActivity() {
                     .put("type", if (hasTrust) "connect" else "pair")
                     .put("code", if (hasTrust) JSONObject.NULL else code)
                     .put("deviceId", currentDeviceId())
+                    .put("stableDeviceKey", stableDeviceKey)
                     .put("displayName", android.os.Build.MODEL ?: "Android")
                     .put("platform", "android")
                     .put("architecture", System.getProperty("os.arch") ?: "unknown")

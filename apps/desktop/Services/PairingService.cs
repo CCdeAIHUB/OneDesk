@@ -51,17 +51,76 @@ public sealed class PairingService
         return true;
     }
 
-    public TrustedPairingCredential CreateTrustCredential(string deviceId, string displayName)
+    public TrustedPairingCredential? FindPairingIdentity(string? stableDeviceKey, string displayName)
     {
+        var normalizedKey = NormalizeStableDeviceKey(stableDeviceKey);
+        if (normalizedKey is null)
+        {
+            return null;
+        }
+
+        var exact = _trusted.Values.FirstOrDefault(item =>
+            string.Equals(item.StableDeviceKey, normalizedKey, StringComparison.Ordinal));
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        // 旧版本没有保存稳定键。仅在名称唯一时迁移，避免两台同型号设备被错误合并。
+        var legacyMatches = _trusted.Values
+            .Where(item => string.IsNullOrWhiteSpace(item.StableDeviceKey))
+            .Where(item => string.Equals(item.DisplayName, displayName, StringComparison.OrdinalIgnoreCase))
+            .Take(2)
+            .ToArray();
+        return legacyMatches.Length == 1 ? legacyMatches[0] : null;
+    }
+
+    public TrustedPairingCredential CreateTrustCredential(
+        string deviceId,
+        string displayName,
+        string? stableDeviceKey = null,
+        string? platform = null,
+        string? architecture = null)
+    {
+        _trusted.TryGetValue(deviceId, out var existing);
         var credential = new TrustedPairingCredential(
             deviceId,
             displayName,
-            null,
+            existing?.Remark,
             Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)),
-            DateTimeOffset.UtcNow);
+            existing?.CreatedAt ?? DateTimeOffset.UtcNow,
+            NormalizeStableDeviceKey(stableDeviceKey) ?? existing?.StableDeviceKey,
+            string.IsNullOrWhiteSpace(platform) ? existing?.Platform : platform.Trim(),
+            string.IsNullOrWhiteSpace(architecture) ? existing?.Architecture : architecture.Trim());
         _trusted[deviceId] = credential;
         SaveTrustedDevices();
         return credential;
+    }
+
+    public bool BindStableDeviceKey(string deviceId, string? stableDeviceKey, string? platform, string? architecture)
+    {
+        var normalizedKey = NormalizeStableDeviceKey(stableDeviceKey);
+        if (normalizedKey is null || !_trusted.TryGetValue(deviceId, out var credential))
+        {
+            return false;
+        }
+
+        if (_trusted.Values.Any(item =>
+                !string.Equals(item.DeviceId, deviceId, StringComparison.Ordinal) &&
+                string.Equals(item.StableDeviceKey, normalizedKey, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        // 可信连接已先验证长期凭据，因此此处只为现有身份补充重装可恢复的索引。
+        _trusted[deviceId] = credential with
+        {
+            StableDeviceKey = normalizedKey,
+            Platform = string.IsNullOrWhiteSpace(platform) ? credential.Platform : platform.Trim(),
+            Architecture = string.IsNullOrWhiteSpace(architecture) ? credential.Architecture : architecture.Trim()
+        };
+        SaveTrustedDevices();
+        return true;
     }
 
     public TrustedPairingCredential? RenameTrustedDevice(string deviceId, string remark)
@@ -131,6 +190,12 @@ public sealed class PairingService
     {
         File.WriteAllText(_trustedPath, JsonSerializer.Serialize(_trusted.Values.OrderBy(item => item.CreatedAt).ToArray(), JsonOptions));
     }
+
+    private static string? NormalizeStableDeviceKey(string? stableDeviceKey)
+    {
+        var value = stableDeviceKey?.Trim();
+        return string.IsNullOrWhiteSpace(value) || value.Length > 128 ? null : value;
+    }
 }
 
 public sealed record PairingCodeState(string Code, DateTimeOffset ExpiresAt, int Attempts);
@@ -140,4 +205,7 @@ public sealed record TrustedPairingCredential(
     string DisplayName,
     string? Remark,
     string Token,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? StableDeviceKey = null,
+    string? Platform = null,
+    string? Architecture = null);

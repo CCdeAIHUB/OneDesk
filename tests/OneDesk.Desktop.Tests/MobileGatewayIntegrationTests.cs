@@ -63,6 +63,7 @@ public sealed class MobileGatewayIntegrationTests : IAsyncLifetime
                 requestId = "pair-1",
                 code = pairCode,
                 deviceId = "android-local",
+                stableDeviceKey = "android:stable-device-test",
                 displayName = "Android Test",
                 platform = "android",
                 architecture = "arm64",
@@ -115,6 +116,29 @@ public sealed class MobileGatewayIntegrationTests : IAsyncLifetime
             var secondEventId = secondEvent.GetProperty("payload").GetProperty("eventId").GetString()!;
             await SendAsync(subscriber, Authorized("scheme-ack", mobileId, token, new { eventId = secondEventId }));
             Assert.True((await secondPush).Acknowledged);
+
+            // 卸载重装会清除令牌和桌面分配 ID，但 Android 稳定键不变；重新配对必须复用原身份。
+            var reinstallCode = pairing.GenerateVerificationCode();
+            await using var reinstalledClient = await MsQuicClientTransport.ConnectAsync(
+                new IPEndPoint(IPAddress.Loopback, gateway.Port),
+                _ => true,
+                (_, _) => ValueTask.CompletedTask,
+                cancellationToken);
+            var reinstallResponse = await SendAndReceiveAsync(reinstalledClient, new
+            {
+                type = "pair",
+                requestId = "pair-after-reinstall",
+                code = reinstallCode,
+                deviceId = "android-new-install-local-id",
+                stableDeviceKey = "android:stable-device-test",
+                displayName = "Android Test",
+                platform = "android",
+                architecture = "arm64",
+                logs = Array.Empty<object>()
+            });
+            Assert.True(reinstallResponse.GetProperty("ok").GetBoolean());
+            Assert.Equal(mobileId, reinstallResponse.GetProperty("payload").GetProperty("assignedMobile").GetProperty("deviceId").GetString());
+            Assert.Single(pairing.TrustedDevices());
         }
         finally
         {
